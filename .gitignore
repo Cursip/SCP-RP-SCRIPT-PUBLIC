@@ -1,0 +1,8 @@
+# Nur Klartext-Skripte versionieren
+*.tmp
+*.log
+*.bak
+
+# Windows / Explorer
+Thumbs.db
+desktop.ini
