@@ -95,7 +95,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.7 (2026-09-30)"
+local BUILD = "v2.8 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -666,6 +666,9 @@ local function keepConnection(conn)
     return conn
 end
 
+-- forward declaration: filled in section [10d], used by the ESP and the list
+local isStaffMember
+
 --=====================================================================
 -- [7] CONFIG
 --=====================================================================
@@ -692,6 +695,10 @@ local Config = {
         RoleIgnoreList = { "researcher", "forscher", "research", "wissenschaftler" },
         TargetInfo = true,
         InfoColor = Color3.fromRGB(240, 240, 240),
+        Prediction = 0.15,
+        Hitbox = false,
+        HitboxSize = 6,
+        HitboxTransparency = 1,
     },
     ESP = {
         Enabled = false,
@@ -737,6 +744,17 @@ local Config = {
     Profile = {
         Slot = "Slot 1",
         AutoLoad = false,
+    },
+    -- Staff detection, modelled on the group/rank check used by Vodka Hub
+    -- (SCP:RP staff group). Verify the id/rank for your game; the keyword list
+    -- is a fallback that reads the labels the game puts on a character.
+    Staff = {
+        Enabled = true,
+        GroupId = 5479038,
+        MinRank = 200,
+        Keywords = { "moderator", "admin", "staff", "owner", "developer" },
+        Notify = true,
+        Panic = false,
     },
     Keybinds = {
         MenuToggle = Enum.KeyCode.K,
@@ -1152,9 +1170,10 @@ local function installHook(): (boolean, string)
         old = clonefunction(hookfunction(bulletHit, newcclosure(function(_, hitData, ...)
             local target = findTarget(currentCam().CFrame.Position)
             if target then
+                local predicted = target.Position + (target.AssemblyLinearVelocity or Vector3.zero) * Config.Aim.Prediction
                 return old(_, {
                     ["Instance"] = target,
-                    ["Position"] = target.Position,
+                    ["Position"] = predicted,
                     ["Normal"] = Vector3.new(0, 1, 0),
                     ["Material"] = target.Material,
                 }, ...)
@@ -1345,12 +1364,14 @@ local function updateESP()
                     objects.boxStroke.Transparency = cfg.BoxTransparency
 
                     local role = cfg.ShowRole and roleText(p, char) or nil
+                    local staff = isStaffMember and isStaffMember(p) or false
                     local nameHeight = role and 32 or 16
+                    local display = (staff and "[STAFF] " or "") .. p.Name
                     objects.name.Visible = cfg.Name
                     objects.name.Size = UDim2.fromOffset(240, nameHeight)
                     objects.name.Position = UDim2.fromOffset(math.floor(minX + w / 2 - 120), math.floor(minY - nameHeight))
-                    objects.name.Text = role and (p.Name .. "\n" .. role) or p.Name
-                    objects.name.TextColor3 = cfg.NameColor
+                    objects.name.Text = role and (display .. "\n" .. role) or display
+                    objects.name.TextColor3 = staff and Theme.danger or cfg.NameColor
                     objects.name.TextSize = cfg.NameSize
 
                     objects.dist.Visible = cfg.Distance
@@ -1516,6 +1537,7 @@ local function updatePlayerList()
                 dist = hrp and (cam.CFrame.Position - hrp.Position).Magnitude or nil,
                 role = char and roleText(p, char) or nil,
                 ignored = isIgnoredRole(p, char),
+                staff = isStaffMember and isStaffMember(p) or false,
             })
         end
     end
@@ -1529,8 +1551,8 @@ local function updatePlayerList()
         row.frame.Visible = true
         local p = entry.player
         local dimmed = Config.List.DimIgnored and entry.ignored
-        row.name.Text = p.Name
-        row.name.TextColor3 = dimmed and Theme.dim or Theme.text
+        row.name.Text = (entry.staff and "[STAFF] " or "") .. p.Name
+        row.name.TextColor3 = entry.staff and Theme.danger or (dimmed and Theme.dim or Theme.text)
 
         local parts = {}
         if Config.List.ShowRole and entry.role then table.insert(parts, entry.role) end
@@ -1538,8 +1560,9 @@ local function updatePlayerList()
         if entry.hp then table.insert(parts, entry.hp .. " HP") end
         if entry.dist then table.insert(parts, ("%d studs"):format(entry.dist)) end
         if entry.ignored then table.insert(parts, "ignored") end
+        if entry.staff then table.insert(parts, "STAFF") end
         row.info.Text = table.concat(parts, "  |  ")
-        row.info.TextColor3 = dimmed and Theme.dim or Theme.accent
+        row.info.TextColor3 = entry.staff and Theme.danger or (dimmed and Theme.dim or Theme.accent)
     end
     for index = #entries + 1, #List.rows do
         List.rows[index].frame.Visible = false
@@ -1782,10 +1805,11 @@ local function cameraAssistStep(dt: number)
 
     local target = findTarget(cam.CFrame.Position, true)
     if not target then return end
-    local delta = target.Position - cam.CFrame.Position
+    local aimAt = target.Position + (target.AssemblyLinearVelocity or Vector3.zero) * cfg.Prediction
+    local delta = aimAt - cam.CFrame.Position
     if delta.Magnitude < 1 then return end
 
-    local goal = CFrame.lookAt(cam.CFrame.Position, target.Position)
+    local goal = CFrame.lookAt(cam.CFrame.Position, aimAt)
     local alpha = 1 - (1 - math.clamp(cfg.Smoothness, 0.02, 1)) ^ (dt * 60)
     cam.CFrame = cam.CFrame:Lerp(goal, alpha)
 end
@@ -1862,6 +1886,126 @@ local function serverHop()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, pick, plr)
     end)
     toast(teleported and "Hopping to another server..." or "Hop failed", teleported and Theme.success or Theme.danger)
+end
+
+--=====================================================================
+-- [10d] STAFF DETECTOR + PANIC MODE + HITBOX EXPANDER
+--=====================================================================
+local StaffState = { present = false, names = {}, result = {} }
+
+local function staffByKeywords(player: Player): boolean
+    local char = player.Character
+    if not char then return false end
+    for _, text in ipairs(characterLabels(player, char)) do
+        local lower = string.lower(text)
+        for _, word in ipairs(Config.Staff.Keywords) do
+            if type(word) == "string" and #word > 0 and string.find(lower, word, 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Full check (may yield, so it only runs from the staff coroutine below).
+local function evaluateStaff(player: Player): boolean
+    if staffByKeywords(player) then return true end
+    local ok, rank = pcall(function()
+        return player:GetRankInGroup(Config.Staff.GroupId)
+    end)
+    return ok and type(rank) == "number" and rank >= Config.Staff.MinRank
+end
+
+-- Cheap, render-safe read: the cached verdict, otherwise only the label check.
+isStaffMember = function(player: Player): boolean
+    if not Config.Staff.Enabled then return false end
+    local cached = StaffState.result[player]
+    if cached ~= nil then return cached end
+    return staffByKeywords(player)
+end
+
+local function refreshStaff()
+    if not Config.Staff.Enabled then
+        StaffState.present = false
+        StaffState.names = {}
+        table.clear(StaffState.result)
+        return
+    end
+
+    local names = {}
+    for _, p in next, Players:GetPlayers() do
+        if p ~= plr then
+            local staff = evaluateStaff(p)
+            StaffState.result[p] = staff
+            if staff then
+                table.insert(names, p.Name)
+            end
+        end
+    end
+
+    local wasPresent = StaffState.present
+    StaffState.present = #names > 0
+    StaffState.names = names
+
+    if StaffState.present and not wasPresent and Config.Staff.Notify then
+        toast("STAFF in server: " .. table.concat(names, ", "), Theme.danger)
+    end
+
+    -- Panic mode: switch the risky features off while staff is around
+    if Config.Staff.Panic then
+        if StaffState.present then
+            if Config.Aim.Enabled or Config.Player.Noclip or Config.ESP.Enabled then
+                setPath("Aim.Enabled", false)
+                setPath("ESP.Enabled", false)
+                syncAimGlobals()
+                pcall(setNoclip, false)
+                UI:RefreshAll()
+                toast("Panic mode: staff present, aim/ESP/noclip switched off", Theme.danger)
+            end
+        elseif wasPresent and Config.Staff.Notify then
+            toast("Staff left - features stay off until you enable them again", Theme.accent)
+        end
+    end
+end
+
+-- own coroutine: GetRankInGroup can yield and must not run in the render path
+task.spawn(function()
+    while not State.unloaded do
+        pcall(refreshStaff)
+        task.wait(2)
+    end
+end)
+
+-- Hitbox expander: enlarges the head of other players locally (useful in games
+-- that hit-test on the client).
+local Hitbox = { original = setmetatable({}, { __mode = "k" }) }
+
+local function updateHitbox()
+    local cfg = Config.Aim
+    if not cfg.Hitbox then
+        for part, saved in pairs(Hitbox.original) do
+            if typeof(part) == "Instance" and part.Parent then
+                part.Size = saved.size
+                part.Transparency = saved.transparency
+            end
+        end
+        table.clear(Hitbox.original)
+        return
+    end
+
+    for _, p in next, Players:GetPlayers() do
+        if p ~= plr and not isSameTeam(p, true) then
+            local char = p.Character
+            local head = char and char:FindFirstChild("Head")
+            if head and head:IsA("BasePart") then
+                if not Hitbox.original[head] then
+                    Hitbox.original[head] = { size = head.Size, transparency = head.Transparency }
+                end
+                head.Size = Vector3.new(cfg.HitboxSize, cfg.HitboxSize, cfg.HitboxSize)
+                head.Transparency = cfg.HitboxTransparency
+            end
+        end
+    end
 end
 
 --=====================================================================
@@ -2466,6 +2610,10 @@ local menuOk, menuErr = pcall(function()
         s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
         s:Dropdown({ text = "Aim mode", path = "Aim.Mode", options = { "Silent (BulletHit)", "Camera assist" }, onChanged = onAimModeChanged })
         s:Slider({ text = "Camera assist smoothness", path = "Aim.Smoothness", min = 0.05, max = 1, step = 0.05, decimals = 2 })
+        s:Slider({ text = "Prediction (lead moving targets)", path = "Aim.Prediction", min = 0, max = 0.5, step = 0.05, decimals = 2 })
+        s:Toggle({ text = "Hitbox expander", path = "Aim.Hitbox" })
+        s:Slider({ text = "Hitbox size", path = "Aim.HitboxSize", min = 2, max = 20, step = 1 })
+        s:Slider({ text = "Hitbox transparency", path = "Aim.HitboxTransparency", min = 0, max = 1, step = 0.1, decimals = 1 })
         s:Toggle({ text = "Auto fire when on target (risky)", path = "Aim.AutoFire" })
         s:Label("Silent = SCP:RP only (hooks Controller.BulletHit). Camera assist = works in any game, it turns your own camera.")
 
@@ -2540,6 +2688,18 @@ local menuOk, menuErr = pcall(function()
         ut:Slider({ text = "Camera FOV (0 = game default)", path = "Utility.CameraFOV", min = 0, max = 120, step = 5 })
         ut:Button({ text = "Rejoin this server", callback = rejoinServer })
         ut:Button({ text = "Server hop (different server)", callback = serverHop })
+    end
+
+    local safetyTab = window:Tab("Safety")
+    do
+        local s = safetyTab:Section("Staff detector")
+        s:Toggle({ text = "Staff detector", path = "Staff.Enabled" })
+        s:Toggle({ text = "Notify when staff is in the server", path = "Staff.Notify" })
+        s:Toggle({ text = "Panic mode: switch aim/ESP/noclip off while staff is present", path = "Staff.Panic" })
+        s:Slider({ text = "Minimum staff rank", path = "Staff.MinRank", min = 0, max = 255, step = 1 })
+        s:Label("Group id " .. tostring(Config.Staff.GroupId) .. " - change Config.Staff.GroupId if your game uses another group.")
+        s:Label("Extra keywords checked in the role labels: " .. table.concat(Config.Staff.Keywords, ", "))
+        s:Label("Detected staff is marked [STAFF] in red in the ESP and in the player list, so you can see who is watching.")
     end
 
     local settingsTab = window:Tab("Settings")
@@ -2768,6 +2928,7 @@ keepConnection(RunService.RenderStepped:Connect(function()
             updateDebugTab()
             updatePlayerList()
             updateStatsLabels()
+            updateHitbox()
 
             -- noclip safety: indicator while active and an automatic off in
             -- toggle mode, so it cannot stay on unnoticed
@@ -2930,6 +3091,8 @@ do
         State.connections = {}
 
         clearESP()
+        Config.Aim.Hitbox = false
+        pcall(updateHitbox)
         pcall(setNoclip, false)
         pcall(setFullbright, false)
         pcall(setFpsBoost, false)
