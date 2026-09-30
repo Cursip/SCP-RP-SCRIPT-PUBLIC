@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.7 (2026-09-30)"
+local BUILD = "v3.8 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -1061,21 +1061,35 @@ local function matchesRoleList(text: string?): boolean
     return false
 end
 
--- true = never aim at this player. Researchers are a role, not always a team,
--- so the team name, role attributes and the character's labels are checked.
-local function isIgnoredRole(player: Player, char: Model?): boolean
-    if not Config.Aim.IgnoreRoles then return false end
-    if matchesRoleList(player.Team and player.Team.Name) then return true end
+-- Researchers are a role, not always a team, so the team name, the role
+-- attributes and the label the game shows as the role are checked.
+-- Which source matched, or nil. Kept separate from isIgnoredRole so the Debug
+-- tab can say why someone was skipped instead of leaving it a guess.
+local function ignoredReason(player: Player, char: Model?): string?
+    if not Config.Aim.IgnoreRoles then return nil end
+    if matchesRoleList(player.Team and player.Team.Name) then
+        return "team " .. tostring(player.Team and player.Team.Name)
+    end
     for _, attribute in ipairs({ "Role", "RoleName", "Team", "Class", "Job" }) do
         local value = player:GetAttribute(attribute)
-        if type(value) == "string" and matchesRoleList(value) then return true end
-    end
-    if char then
-        for _, text in ipairs(characterLabels(player, char)) do
-            if matchesRoleList(text) then return true end
+        if type(value) == "string" and matchesRoleList(value) then
+            return ("attr %s=\"%s\""):format(attribute, value)
         end
     end
-    return false
+    if char then
+        -- only the label the game shows as the role, not every TextLabel in the
+        -- character (items and tags in there caused wrong skips)
+        local role = roleText(player, char)
+        if matchesRoleList(role) then
+            return ("role \"%s\""):format(tostring(role))
+        end
+    end
+    return nil
+end
+
+-- true = never aim at this player
+local function isIgnoredRole(player: Player, char: Model?): boolean
+    return ignoredReason(player, char) ~= nil
 end
 
 -- Returns the target part or nil. forVisual = display only (not counted
@@ -3093,10 +3107,25 @@ local function updateWheelSink()
     setWheelSink(Config.Menu.BlockCameraZoom and menuOpen())
 end
 
+-- Camera.Focus is not usable here: SCP:RP's camera does not update it, so the
+-- first version pinned 200 studs (distance to a stale focus) and the guard never
+-- saw a change. The character's head is the reference instead.
+local function camReference(): BasePart?
+    local char = plr.Character
+    if not char then return nil end
+    return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function camDistance(): number?
+    local ref = camReference()
+    if not ref then return nil end
+    return (currentCam().CFrame.Position - ref.Position).Magnitude
+end
+
 -- Last resort that works no matter how the game stores its zoom: remember the
--- camera distance, and if a wheel tick happens while the menu is open, put the
--- camera back to the distance it had before that tick. Only wheel ticks are
--- corrected, so collision and normal camera movement stay untouched.
+-- distance from the head, and if a wheel tick happens while the menu is open,
+-- put the camera back to the distance it had before that tick. Only wheel ticks
+-- are corrected, so collision and normal camera movement stay untouched.
 local ZoomGuard = { distance = nil, restoreTo = nil, blocked = 0 }
 
 local function zoomGuardArm()
@@ -3106,16 +3135,17 @@ local function zoomGuardArm()
 end
 
 zoomGuardStep = function()
+    local ref = camReference()
+    if not ref then return end
     local cam = currentCam()
-    local focus = cam.Focus.Position
-    local offset = cam.CFrame.Position - focus
+    local offset = cam.CFrame.Position - ref.Position
     local distance = offset.Magnitude
     if distance < 0.01 then return end
 
     local want = ZoomGuard.restoreTo
     ZoomGuard.restoreTo = nil
-    if want and math.abs(distance - want) > 0.01 then
-        local newPos = focus + offset.Unit * want
+    if want and want > 0.5 and math.abs(distance - want) > 0.05 then
+        local newPos = ref.Position + offset.Unit * want
         cam.CFrame = CFrame.lookAt(newPos, newPos + cam.CFrame.LookVector)
         distance = want
         ZoomGuard.blocked += 1
@@ -3144,11 +3174,14 @@ local function updateZoomPin()
         return
     end
 
-    local cam = currentCam()
     if not ZoomPin.active then
+        local measured = camDistance()
+        -- implausible reading (loading, teleport, stale reference): leave the
+        -- properties alone instead of pinning nonsense
+        if not measured or measured < 0.5 or measured > 100 then return end
         ZoomPin.min = plr.CameraMinZoomDistance
         ZoomPin.max = plr.CameraMaxZoomDistance
-        ZoomPin.distance = (cam.CFrame.Position - cam.Focus.Position).Magnitude
+        ZoomPin.distance = measured
         ZoomPin.active = true
     end
 
@@ -3271,10 +3304,12 @@ local function updateDebugTab()
                 tostring(hookfunction ~= nil), tostring(getsenv ~= nil),
                 tostring(AIM_DEBUG.controller), tostring(AIM_DEBUG.bulletHit), tostring(AIM_DEBUG.uiLoaded)
             )
-            labels.calls.Text = ("getTarget: calls=%d  with target=%d  |  menu open=%s  wheel sink=%s  zoom pin=%s  zoom blocked=%d"):format(
+            local zoomNow = camDistance()
+            labels.calls.Text = ("getTarget: calls=%d  with target=%d  |  menu open=%s  wheel sink=%s  zoom pin=%s  zoom now=%s  zoom blocked=%d"):format(
                 AIM_DEBUG.calls, AIM_DEBUG.hits,
                 tostring(menuOpen()), tostring(wheelBound),
                 ZoomPin.active and ("%.1f"):format(ZoomPin.distance or 0) or "off",
+                zoomNow and ("%.1f"):format(zoomNow) or "?",
                 ZoomGuard.blocked
             )
             labels.last.Text = "Last target: " .. AIM_DEBUG.lastTarget
@@ -3292,7 +3327,7 @@ local function updateDebugTab()
                         local texts = characterLabels(p, pchar)
                         if #texts > 0 then sample = " role=\"" .. string.sub(texts[1], 1, 24) .. "\"" end
                     end
-                    table.insert(lines, ("%s [%s] same=%s ignored=%s%s"):format(p.Name, p.Team and p.Team.Name or "NONE", tostring(isSameTeam(p, false)), tostring(isIgnoredRole(p, pchar)), sample))
+                    table.insert(lines, ("%s [%s] same=%s ignored=%s%s"):format(p.Name, p.Team and p.Team.Name or "NONE", tostring(isSameTeam(p, false)), tostring(ignoredReason(p, pchar)), sample))
                 end
             end
             labels.players.Text = "Players:\n" .. table.concat(lines, "\n")
