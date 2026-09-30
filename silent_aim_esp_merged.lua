@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.8 (2026-09-30)"
+local BUILD = "v3.9 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -1232,10 +1232,13 @@ local function installHook(): (boolean, string)
         old = clonefunction(hookfunction(bulletHit, newcclosure(function(_, hitData, ...)
             local target = findTarget(currentCam().CFrame.Position)
             if target then
-                local predicted = target.Position + (target.AssemblyLinearVelocity or Vector3.zero) * Config.Aim.Prediction
+                -- No prediction here on purpose: the game decides the hit from
+                -- the Instance field we send, so the shot lands on the selected
+                -- part no matter what. Position is only the impact point, and
+                -- leading it would just move that point off the target.
                 return old(_, {
                     ["Instance"] = target,
-                    ["Position"] = predicted,
+                    ["Position"] = target.Position,
                     ["Normal"] = Vector3.new(0, 1, 0),
                     ["Material"] = target.Material,
                 }, ...)
@@ -2884,7 +2887,8 @@ local menuOk, menuErr = pcall(function()
         s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
         s:Dropdown({ text = "Aim mode", path = "Aim.Mode", options = { "Silent (BulletHit)", "Camera assist" }, onChanged = onAimModeChanged })
         s:Slider({ text = "Camera assist smoothness", path = "Aim.Smoothness", min = 0.05, max = 1, step = 0.05, decimals = 2 })
-        s:Slider({ text = "Prediction (lead moving targets)", path = "Aim.Prediction", min = 0, max = 0.5, step = 0.05, decimals = 2 })
+        s:Slider({ text = "Prediction (camera assist only)", path = "Aim.Prediction", min = 0, max = 0.5, step = 0.05, decimals = 2 })
+        s:Label("Only used by camera assist, to lead a moving target. Silent aim always hits the part it picks - the game takes the hit from the Instance field, so the impact position cannot change the outcome.")
         s:Toggle({ text = "Hitbox expander", path = "Aim.Hitbox" })
         s:Slider({ text = "Hitbox size", path = "Aim.HitboxSize", min = 2, max = 20, step = 1 })
         s:Slider({ text = "Hitbox transparency", path = "Aim.HitboxTransparency", min = 0, max = 1, step = 0.1, decimals = 1 })
