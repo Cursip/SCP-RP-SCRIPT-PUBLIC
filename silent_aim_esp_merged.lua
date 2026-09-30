@@ -64,6 +64,7 @@ local HttpService = cloneref(game:GetService("HttpService"))
 local Lighting = cloneref(game:GetService("Lighting"))
 local TeleportService = cloneref(game:GetService("TeleportService"))
 local ContextActionService = cloneref(game:GetService("ContextActionService"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 
 local plr = Players.LocalPlayer
 local startedAt = os.clock()
@@ -107,7 +108,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.3 (2026-09-30)"
+local BUILD = "v4.4 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -2265,27 +2266,85 @@ end
 --=====================================================================
 local Fun = { track = nil }
 
+-- The animation names are read from the game instead of guessed. SCP:RP ships an
+-- Animate script, but with different child names than the default set, so every
+-- built-in name failed with "does not exist". The catalog looks at the
+-- character, ReplicatedStorage and PlayerScripts, is capped, and is cached.
+local AnimCatalog = { names = nil, map = nil, at = 0 }
+
+local function animScan(container: Instance?, map: { [string]: Animation }, depth: number, budget: { number })
+    if not container or depth > 3 or budget[1] <= 0 then return end
+    for _, obj in ipairs(container:GetChildren()) do
+        if budget[1] <= 0 then return end
+        budget[1] -= 1
+        if obj:IsA("Animation") then
+            if map[obj.Name] == nil then
+                map[obj.Name] = obj
+            end
+        else
+            animScan(obj, map, depth + 1, budget)
+        end
+    end
+end
+
+local function animCatalog(): ({ string }, { [string]: Animation })
+    local now = os.clock()
+    if AnimCatalog.names and now - AnimCatalog.at < 30 then
+        return AnimCatalog.names, AnimCatalog.map :: any
+    end
+    local map = {}
+    local budget = { 6000 }
+    pcall(function() animScan(plr.Character, map, 0, budget) end)
+    pcall(function()
+        local shared = ReplicatedStorage:FindFirstChild("Animations") or ReplicatedStorage
+        animScan(shared, map, 0, budget)
+    end)
+    pcall(function() animScan(plr.PlayerScripts, map, 0, budget) end)
+
+    local names = {}
+    for name in pairs(map) do
+        table.insert(names, name)
+    end
+    table.sort(names)
+    AnimCatalog.names, AnimCatalog.map, AnimCatalog.at = names, map, now
+    return names, map
+end
+
+local FALLBACK_ANIMATIONS = {
+    "dance1", "dance2", "dance3", "wave", "laugh", "cheer", "point",
+    "sit", "fall", "swim", "swimidle", "climb", "jump",
+    "idle1", "idle2", "walk", "run", "toolnone",
+}
+
 local function funAnimationNames(): { string }
-    return {
-        "dance1", "dance2", "dance3", "wave", "laugh", "cheer", "point",
-        "sit", "fall", "swim", "swimidle", "climb", "jump",
-        "idle1", "idle2", "walk", "run", "toolnone",
-    }
+    local names = animCatalog()
+    if #names == 0 then
+        return FALLBACK_ANIMATIONS
+    end
+    return names
+end
+
+-- keep both animation choices pointing at a name that exists here
+local function funEnsureAnimationChoice()
+    local _, map = animCatalog()
+    local names = AnimCatalog.names
+    if not names or #names == 0 then return end
+    local changed = false
+    if map[Config.Fun.Animation] == nil then
+        Config.Fun.Animation = names[1]
+        changed = true
+    end
+    if map[Config.Fun.RageAnimation] == nil then
+        Config.Fun.RageAnimation = names[1]
+        changed = true
+    end
+    if changed then
+        UI:RefreshAll()
+    end
 end
 
 local function funAvailableAnimations(): { string }
-    local names = {}
-    local char = plr.Character
-    local script = char and char:FindFirstChild("Animate")
-    if script then
-        for _, obj in ipairs(script:GetChildren()) do
-            if obj:IsA("Animation") then
-                table.insert(names, obj.Name)
-            end
-        end
-    end
-    table.sort(names)
-    return names
+    return animCatalog()
 end
 
 local function funStop()
@@ -2302,14 +2361,23 @@ local function funPlay(name: string)
     local char = plr.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local animator = hum and hum:FindFirstChildOfClass("Animator")
-    local script = char and char:FindFirstChild("Animate")
-    if not (animator and script) then
-        toast("No Animate script in the character - nothing to play here", Theme.danger)
+    if not (char and animator) then
+        toast("No humanoid or animator yet", Theme.danger)
         return
     end
-    local anim = script:FindFirstChild(name)
-    if not (anim and anim:IsA("Animation")) then
-        toast(("Animation \"%s\" does not exist in this game"):format(name), Theme.danger)
+
+    -- prefer whatever the game itself provides, wherever it keeps it
+    local _, map = animCatalog()
+    local anim = map[name]
+    if not anim then
+        local script = char:FindFirstChild("Animate")
+        local candidate = script and script:FindFirstChild(name)
+        if candidate and candidate:IsA("Animation") then
+            anim = candidate
+        end
+    end
+    if not anim then
+        toast(("Animation \"%s\" not found - open the dropdown, it lists what this game has"):format(name), Theme.danger)
         return
     end
     funStop()
@@ -3256,6 +3324,19 @@ local function bindDropdown(section, spec)
             return
         end
 
+        -- the list is read when the popup opens, so a dropdown can offer what
+        -- the game actually contains right now instead of a fixed guess
+        local options = spec.options
+        if type(spec.provider) == "function" then
+            local ok, provided = pcall(spec.provider)
+            if ok and type(provided) == "table" and #provided > 0 then
+                options = provided
+            end
+        end
+        if type(options) ~= "table" or #options == 0 then
+            options = { "-" }
+        end
+
         backdrop = new("TextButton", {
             Size = UDim2.new(1, 0, 1, 0),
             BackgroundTransparency = 1,
@@ -3265,7 +3346,7 @@ local function bindDropdown(section, spec)
         backdrop.MouseButton1Click:Connect(closePopup)
 
         popup = new("Frame", {
-            Size = UDim2.fromOffset(math.max(120, holder.AbsoluteSize.X), #spec.options * 24 + 8),
+            Size = UDim2.fromOffset(math.max(120, holder.AbsoluteSize.X), #options * 24 + 8),
             Position = UDim2.fromOffset(holder.AbsolutePosition.X, holder.AbsolutePosition.Y + holder.AbsoluteSize.Y + 4),
             BackgroundColor3 = Theme.panel,
             BorderSizePixel = 0,
@@ -3276,7 +3357,7 @@ local function bindDropdown(section, spec)
         list(popup, 2)
         pad(popup, 4)
 
-        for _, option in ipairs(spec.options) do
+        for _, option in ipairs(options) do
             local item = new("TextButton", {
                 Size = UDim2.new(1, 0, 0, 20),
                 BackgroundColor3 = Theme.element,
@@ -3629,7 +3710,7 @@ local menuOk, menuErr = pcall(function()
     local funTab = window:Tab("Fun")
     do
         local s = funTab:Section("Animation (others see this)")
-        s:Dropdown({ text = "Animation", path = "Fun.Animation", options = funAnimationNames() })
+        s:Dropdown({ text = "Animation", path = "Fun.Animation", provider = funAnimationNames })
         s:Button({ text = "Play on my character", callback = function() funPlay(Config.Fun.Animation) end })
         s:Button({ text = "Stop animation", callback = funStop })
         s:Label("Animations are the only prank that leaves your screen: a character's animation state is sent by its own client. Part properties, spawned instances and sounds created locally are not replicated.")
@@ -3643,7 +3724,7 @@ local menuOk, menuErr = pcall(function()
 
         local r = funTab:Section("SCP-096 mode")
         r:Toggle({ text = "096 mode: rage when somebody looks at you", path = "Fun.SCP096" })
-        r:Dropdown({ text = "Rage animation", path = "Fun.RageAnimation", options = funAnimationNames() })
+        r:Dropdown({ text = "Rage animation", path = "Fun.RageAnimation", provider = funAnimationNames })
         r:Toggle({ text = "Also charge at whoever saw you", path = "Fun.RageCharge" })
         r:Label("Uses the same line of sight check as 173 mode, but plays the animation at double speed instead of freezing. Charge takes over your movement while someone is watching.")
 
@@ -4090,6 +4171,7 @@ keepConnection(RunService.RenderStepped:Connect(function(dt)
             updateStatsLabels()
             updateHitbox()
             applyMovement()
+            funEnsureAnimationChoice()
 
             if State.watermark then
                 State.watermark.Visible = Config.Misc.Watermark
