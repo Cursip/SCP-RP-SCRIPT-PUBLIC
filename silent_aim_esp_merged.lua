@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.1 (2026-09-30)"
+local BUILD = "v4.2 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -666,6 +666,7 @@ local State = {
     fovStroke = nil,
     infoLabel = nil,
     noclipLabel = nil,
+    statueLabel = nil,
     noclipSince = nil,
     visualsGui = nil,
     connections = {},
@@ -764,6 +765,10 @@ local Config = {
     Fun = {
         Animation = "dance1",
         GagSeconds = 5,
+        SCP173 = false,
+        StatueRange = 250,
+        Spin = false,
+        SpinSpeed = 720,
     },
     Utility = {
         AntiAFK = false,
@@ -2347,6 +2352,158 @@ local function funBanner(text: string, color: Color3)
 end
 
 --=====================================================================
+-- [10g] SCP-173 MODE + BEYBLADE (both visible to other players)
+--=====================================================================
+local rayExcludeType
+pcall(function() rayExcludeType = Enum.RaycastFilterType.Exclude end)
+if not rayExcludeType then
+    pcall(function() rayExcludeType = Enum.RaycastFilterType.Blacklist end)
+end
+
+local Statue = { watchedBy = nil, nextCheck = 0, frozen = false, spinAngle = 0 }
+
+-- Roughly "is somebody looking at me": their character faces me, they are in
+-- range, and the line between our heads is clear. Their real camera is not
+-- readable from here, so the body direction stands in for it.
+local function watcherName(): string?
+    local myChar = plr.Character
+    local myHead = myChar and myChar:FindFirstChild("Head")
+    if not (myChar and myHead) then return nil end
+
+    local range = Config.Fun.StatueRange
+    for _, p in next, Players:GetPlayers() do
+        if p ~= plr then
+            local char = p.Character
+            local head = char and char:FindFirstChild("Head")
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if head and hrp and hum and hum.Health > 0 then
+                local toMe = myHead.Position - head.Position
+                local distance = toMe.Magnitude
+                if distance > 0.5 and distance < range and hrp.CFrame.LookVector:Dot(toMe.Unit) > 0.55 then
+                    local clear = true
+                    if rayExcludeType then
+                        local params = RaycastParams.new()
+                        params.FilterType = rayExcludeType
+                        params.FilterDescendantsInstances = { char, myChar }
+                        params.IgnoreWater = true
+                        local ok, hit = pcall(function()
+                            return workspace:Raycast(head.Position, toMe, params)
+                        end)
+                        clear = ok and hit == nil
+                    end
+                    if clear then
+                        return p.Name
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Freezing the animation tracks as well is what makes it look like a statue:
+-- the idle breathing stops too, instead of only the walking.
+local function freezeAnimationTracks(freeze: boolean)
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    if not animator then return end
+    local ok, tracks = pcall(function()
+        return animator:GetPlayingAnimationTracks()
+    end)
+    if not ok or type(tracks) ~= "table" then return end
+    for _, track in ipairs(tracks) do
+        pcall(function() track:AdjustSpeed(freeze and 0 or 1) end)
+    end
+end
+
+local function statueLabel(): TextLabel?
+    if State.statueLabel and State.statueLabel.Parent then return State.statueLabel end
+    if not State.visualsGui then return nil end
+    State.statueLabel = new("TextLabel", {
+        Name = "StatueState",
+        Size = UDim2.fromOffset(360, 18),
+        Position = UDim2.new(0.5, -180, 1, -68),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Theme.accent,
+        TextStrokeTransparency = 0.3,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        Text = "",
+        Visible = false,
+    }, State.visualsGui)
+    return State.statueLabel
+end
+
+local function statueStep()
+    local label = statueLabel()
+    if not Config.Fun.SCP173 then
+        if Statue.frozen then
+            Statue.frozen = false
+            freezeAnimationTracks(false)
+        end
+        if label then label.Visible = false end
+        return
+    end
+
+    local now = os.clock()
+    if now >= Statue.nextCheck then
+        Statue.nextCheck = now + 0.1
+        Statue.watchedBy = watcherName()
+    end
+
+    if Statue.watchedBy then
+        Statue.frozen = true
+        local char = plr.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hum and hrp then
+            hum:Move(Vector3.zero, false)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end
+        freezeAnimationTracks(true)
+        if label then
+            label.Visible = true
+            label.Text = ("173 MODE - WATCHED by %s, standing still"):format(Statue.watchedBy)
+            label.TextColor3 = Theme.danger
+        end
+    else
+        if Statue.frozen then
+            Statue.frozen = false
+            freezeAnimationTracks(false)
+        end
+        if label then
+            label.Visible = true
+            label.Text = "173 MODE - nobody is looking, you are free"
+            label.TextColor3 = Theme.success
+        end
+    end
+end
+
+-- Beyblade: the character's orientation belongs to its own client, so others
+-- see the spin. AutoRotate has to be off or the humanoid fights the rotation.
+local function spinStep(dt: number)
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not (hum and hrp) then return end
+
+    if not Config.Fun.Spin then
+        if hum.AutoRotate == false then
+            hum.AutoRotate = true
+            Statue.spinAngle = 0
+        end
+        return
+    end
+
+    hum.AutoRotate = false
+    Statue.spinAngle = (Statue.spinAngle + math.rad(Config.Fun.SpinSpeed) * dt) % (math.pi * 2)
+    hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(Config.Fun.SpinSpeed) * dt, 0)
+end
+
+--=====================================================================
 -- [11] MENU BUILD
 --=====================================================================
 -- Visuals (FOV ring, target info, ESP, toasts) live in their own ScreenGui, so
@@ -3097,6 +3254,13 @@ local menuOk, menuErr = pcall(function()
         s:Button({ text = "Stop animation", callback = funStop })
         s:Label("Animations are the only prank that leaves your screen: a character's animation state is sent by its own client. Part properties, spawned instances and sounds created locally are not replicated.")
 
+        local pr = funTab:Section("Pranks (others see these too)")
+        pr:Toggle({ text = "SCP-173 mode: freeze while somebody is looking at you", path = "Fun.SCP173" })
+        pr:Slider({ text = "173 detection range", path = "Fun.StatueRange", min = 50, max = 600, step = 25, suffix = " studs" })
+        pr:Toggle({ text = "Beyblade: spin in place", path = "Fun.Spin" })
+        pr:Slider({ text = "Spin speed", path = "Fun.SpinSpeed", min = 90, max = 3600, step = 90, suffix = " deg/s" })
+        pr:Label("173 mode stops your movement and freezes your animation tracks the moment another player faces you with a clear line of sight - the idle breathing stops as well, so you look like a statue until nobody is watching. It is an approximation: their camera cannot be read from here, so their body direction stands in for it.")
+
         local g = funTab:Section("Local gags (only you see them)")
         g:Slider({ text = "Gag duration", path = "Fun.GagSeconds", min = 1, max = 20, step = 1, suffix = " s" })
         g:Button({ text = "Fake breach alert", callback = function()
@@ -3470,8 +3634,14 @@ end
 
 local frameCounter = 0
 local lastRenderError = 0
-keepConnection(RunService.RenderStepped:Connect(function()
+keepConnection(RunService.RenderStepped:Connect(function(dt)
     if State.unloaded then return end
+
+    -- pranks that have to run every frame, before the physics step
+    pcall(function()
+        statueStep()
+        spinStep(dt or 0)
+    end)
 
     local ok, err = pcall(function()
         updateAimVisuals()
