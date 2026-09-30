@@ -2191,18 +2191,10 @@ keepConnection(RunService.RenderStepped:Connect(function()
     end
 end))
 
-local keysDown = {}
+local lastKeyPress = {}
 
 keepConnection(UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
-
-    -- Holding a key makes Roblox fire repeated InputBegan events (OS key
-    -- repeat). Without this guard a held key toggles a feature on and off.
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        local wasDown = keysDown[input.KeyCode]
-        keysDown[input.KeyCode] = true
-        if wasDown then return end
-    end
 
     -- keybind capture
     if UI.promptBind then
@@ -2222,22 +2214,32 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
     local key = input.KeyCode
 
+    -- Hold-to-aim has to keep working while the key stays down. It is
+    -- idempotent, so repeated events do not matter.
+    if key == Config.Keybinds.AimToggle and Config.Aim.HoldToAim then
+        State.aimKeyDown = true
+        if not State.hookInstalled then pcall(installHook) end
+        return
+    end
+
+    -- Repeat guard: ignore the same key firing again within 250 ms (OS key
+    -- repeat). Timestamp based on purpose, so a key can never get stuck
+    -- "down" if an InputEnded event is ever missed (alt-tab while holding).
+    local now = os.clock()
+    if lastKeyPress[key] and now - lastKeyPress[key] < 0.25 then return end
+    lastKeyPress[key] = now
+
     if key == Config.Keybinds.MenuToggle then
         Config.Menu.Visible = not UI.gui.Enabled
         UI.gui.Enabled = Config.Menu.Visible
         UI:RefreshAll()
 
     elseif key == Config.Keybinds.AimToggle then
-        if Config.Aim.HoldToAim then
-            State.aimKeyDown = true
-            if not State.hookInstalled then pcall(installHook) end
-        else
-            local value = not Config.Aim.Enabled
-            setPath("Aim.Enabled", value)
-            UI:RefreshAll()
-            onAimEnabledChanged(value)
-            toast("Silent Aim " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
-        end
+        local value = not Config.Aim.Enabled
+        setPath("Aim.Enabled", value)
+        UI:RefreshAll()
+        onAimEnabledChanged(value)
+        toast("Silent Aim " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
 
     elseif key == Config.Keybinds.ESPToggle then
         local value = not Config.ESP.Enabled
@@ -2260,11 +2262,8 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
 end))
 
 keepConnection(UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        keysDown[input.KeyCode] = nil
-        if input.KeyCode == Config.Keybinds.AimToggle then
-            State.aimKeyDown = false
-        end
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Config.Keybinds.AimToggle then
+        State.aimKeyDown = false
     end
 end))
 

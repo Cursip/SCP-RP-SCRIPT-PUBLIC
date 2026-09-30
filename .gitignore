@@ -1,7 +1,11 @@
-# Nur Klartext-Skripte versionieren
+# Only plain text scripts are versioned
 *.tmp
 *.log
 *.bak
+
+# Local verification helpers (not part of the repo)
+_*.py
+_backup*
 
 # Windows / Explorer
 Thumbs.db
