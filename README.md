@@ -39,6 +39,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-
 | `V` | toggle ESP |
 | `N` | noclip |
 | `B` | fullbright |
+| `Delete` | unload (same as the button in Settings → Script) |
 
 To rebind: click the key button on the right of a switch, then press the new key.
 
@@ -61,7 +62,7 @@ To rebind: click the key button on the right of a switch, then press the new key
 **Settings**
 - menu visible, UI scale
 - save / load / delete config
-- re-centre menu, unload (removes the GUI, restores the hook, reverts noclip/fullbright)
+- re-centre menu, unload (removes menu, FOV ring, ESP and toasts, restores the aim hook, turns noclip/fullbright off)
 
 ## Flags (section `[2]`)
 

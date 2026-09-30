@@ -94,7 +94,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.3 (2026-09-30)"
+local BUILD = "v2.4 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -722,6 +722,7 @@ local Config = {
         ESPToggle = Enum.KeyCode.V,
         Noclip = Enum.KeyCode.N,
         Fullbright = Enum.KeyCode.B,
+        Unload = Enum.KeyCode.Delete,
     },
 }
 
@@ -2055,6 +2056,7 @@ local menuOk, menuErr = pcall(function()
 
         local u = settingsTab:Section("Script")
         u:Label("Build: " .. AIM_DEBUG.mode)
+        u:Label("Unload removes menu, FOV ring, ESP and toasts, restores the aim hook and turns noclip/fullbright off. Key: " .. Config.Keybinds.Unload.Name)
         u:Button({ text = "Re-centre menu", callback = function()
             window.frame.Position = UDim2.fromOffset(70, 110)
         end })
@@ -2258,6 +2260,11 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
     if lastKeyPress[key] and now - lastKeyPress[key] < 0.25 then return end
     lastKeyPress[key] = now
 
+    if key == Config.Keybinds.Unload then
+        if _G.__scpUnload then _G.__scpUnload() end
+        return
+    end
+
     if key == Config.Keybinds.MenuToggle then
         Config.Menu.Visible = not UI.gui.Enabled
         UI.gui.Enabled = Config.Menu.Visible
@@ -2333,20 +2340,30 @@ do
     UI:RefreshAll()
 
     _G.__scpUnload = function()
+        if State.unloaded then return end
         State.unloaded = true
+
+        -- stop aiming even if the author's build installed its own hook
+        getgenv().sneeky_silent_aim = false
+
         for _, conn in ipairs(State.connections) do
             pcall(function() conn:Disconnect() end)
         end
+        State.connections = {}
+
         clearESP()
         pcall(setNoclip, false)
         pcall(setFullbright, false)
+
         if State.hookInstalled and State.bulletHit and restorefunction then
             pcall(restorefunction, State.bulletHit)
         end
         if UI.gui then UI.gui:Destroy() end
         if State.visualsGui then State.visualsGui:Destroy() end
+        UI.gui = nil
+        State.visualsGui = nil
         _G.__scpUnload = nil
-        warn("[menu] unloaded")
+        print("[menu] unloaded - run the loader again to start over")
     end
 
     toast("Silent Aim " .. (Config.Aim.Enabled and "ON" or "OFF") .. "  |  Hook: " .. AIM_DEBUG.hook,
