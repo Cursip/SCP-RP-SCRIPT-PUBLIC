@@ -102,7 +102,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.9 (2026-09-30)"
+local BUILD = "v3.0 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -250,6 +250,8 @@ local UI = {
     binders = nil,      -- filled in [11]
     promptBind = nil,   -- element waiting for a key press
     refreshers = {},    -- reads Config and refreshes the visuals
+    keyActions = {},    -- [keybind name] = { text, fire } for the generic dispatch
+    attachKeybind = nil -- hook filled in [11] (needs Config)
 }
 
 function UI:RefreshAll()
@@ -540,7 +542,8 @@ function UI:Section(tab, title: string)
             Font = Enum.Font.GothamMedium,
             TextSize = 12,
             TextColor3 = spec.color or Theme.text,
-            Text = spec.text,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = "  " .. spec.text,
             AutoButtonColor = false,
             LayoutOrder = self:next(),
         }, self.holder)
@@ -551,6 +554,10 @@ function UI:Section(tab, title: string)
             local ok, err = pcall(spec.callback)
             if not ok then toast("Error: " .. tostring(err), Theme.danger) end
         end)
+        -- actions get a key slot too (filled in [11], which needs Config)
+        if UI.attachKeybind then
+            UI.attachKeybind(b, spec)
+        end
         return b
     end
 
@@ -2212,6 +2219,53 @@ local window = UI:Window({
     position = UDim2.fromOffset(70, 110),
 })
 
+-- ------------------------------------------------------- keybinds
+-- Every toggle and every button gets a key slot. Nothing is bound in advance:
+-- the badge shows "-" until you click it and press a key. Backspace clears a
+-- binding again.
+local function keyNameFor(path: string?): string
+    return "Toggle_" .. string.gsub(path or "unknown", "[^%w]", "_")
+end
+
+UI.attachKeybind = function(button: TextButton, spec)
+    local name = spec.keybind or ("Btn_" .. string.gsub(spec.text or "action", "[^%w]", ""))
+    local badge = new("TextButton", {
+        Size = UDim2.fromOffset(52, 20),
+        Position = UDim2.new(1, -60, 0.5, -10),
+        BackgroundColor3 = Theme.window,
+        BorderSizePixel = 0,
+        Font = Enum.Font.Gotham,
+        TextSize = 10,
+        TextColor3 = Theme.dim,
+        Text = "-",
+        AutoButtonColor = false,
+        ZIndex = 3,
+    }, button)
+    corner(badge, 5)
+    stroke(badge, Theme.stroke, 1, 0.4)
+
+    local function refreshKey()
+        local key = Config.Keybinds[name]
+        badge.Text = key and key.Name or "-"
+    end
+
+    badge.MouseButton1Click:Connect(function()
+        UI.promptBind = { keybind = name, refresh = refreshKey }
+        badge.Text = "..."
+    end)
+
+    table.insert(UI.refreshers, refreshKey)
+    refreshKey()
+
+    UI.keyActions[name] = {
+        text = spec.text,
+        fire = function()
+            local ok, err = pcall(spec.callback)
+            if not ok then toast("Error: " .. tostring(err), Theme.danger) end
+        end,
+    }
+end
+
 -- ------------------------------------------------------- element binders
 local function bindToggle(section, spec)
     local holder = new("Frame", {
@@ -2250,23 +2304,22 @@ local function bindToggle(section, spec)
     }, pill)
     corner(knob, 8)
 
-    local keyBtn
-    if spec.keybind then
-        keyBtn = new("TextButton", {
-            Size = UDim2.fromOffset(52, 20),
-            Position = UDim2.new(1, -108, 0.5, -10),
-            BackgroundColor3 = Theme.window,
-            BorderSizePixel = 0,
-            Font = Enum.Font.Gotham,
-            TextSize = 10,
-            TextColor3 = Theme.dim,
-            Text = "-",
-            AutoButtonColor = false,
-            ZIndex = 3,
-        }, holder)
-        corner(keyBtn, 5)
-        stroke(keyBtn, Theme.stroke, 1, 0.4)
-    end
+    -- every toggle gets a key slot: unbound ("-") until you set one
+    local keyName = spec.keybind or keyNameFor(spec.path)
+    local keyBtn = new("TextButton", {
+        Size = UDim2.fromOffset(52, 20),
+        Position = UDim2.new(1, -108, 0.5, -10),
+        BackgroundColor3 = Theme.window,
+        BorderSizePixel = 0,
+        Font = Enum.Font.Gotham,
+        TextSize = 10,
+        TextColor3 = Theme.dim,
+        Text = "-",
+        AutoButtonColor = false,
+        ZIndex = 3,
+    }, holder)
+    corner(keyBtn, 5)
+    stroke(keyBtn, Theme.stroke, 1, 0.4)
 
     local function draw()
         local on = getPath(spec.path) and true or false
@@ -2299,18 +2352,19 @@ local function bindToggle(section, spec)
     end)
 
     local function refreshKey()
-        if keyBtn and spec.keybind then
-            local key = Config.Keybinds[spec.keybind]
-            keyBtn.Text = key and key.Name or "-"
-        end
+        local key = Config.Keybinds[keyName]
+        keyBtn.Text = key and key.Name or "-"
     end
 
-    if keyBtn then
-        keyBtn.MouseButton1Click:Connect(function()
-            UI.promptBind = { keybind = spec.keybind, refresh = refreshKey }
-            keyBtn.Text = "..."
-        end)
-    end
+    keyBtn.MouseButton1Click:Connect(function()
+        UI.promptBind = { keybind = keyName, refresh = refreshKey }
+        keyBtn.Text = "..."
+    end)
+
+    UI.keyActions[keyName] = {
+        text = spec.text,
+        fire = function() apply(not getPath(spec.path), true) end,
+    }
 
     table.insert(UI.refreshers, function()
         draw()
@@ -3157,10 +3211,15 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
     if UI.promptBind then
         local bind = UI.promptBind
         if input.UserInputType == Enum.UserInputType.Keyboard then
-            Config.Keybinds[bind.keybind] = input.KeyCode
+            if input.KeyCode == Enum.KeyCode.Backspace then
+                Config.Keybinds[bind.keybind] = nil
+                toast("Key cleared", Theme.dim)
+            else
+                Config.Keybinds[bind.keybind] = input.KeyCode
+                toast("Key set: " .. input.KeyCode.Name, Theme.accent)
+            end
             UI.promptBind = nil
             if bind.refresh then bind.refresh() end
-            toast("Key set: " .. input.KeyCode.Name, Theme.accent)
         else
             UI.promptBind = nil
             if bind.refresh then bind.refresh() end
@@ -3203,12 +3262,6 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
         onAimEnabledChanged(value)
         toast("Silent Aim " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
 
-    elseif key == Config.Keybinds.ESPToggle then
-        local value = not Config.ESP.Enabled
-        setPath("ESP.Enabled", value)
-        UI:RefreshAll()
-        toast("ESP " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
-
     elseif key == Config.Keybinds.Noclip then
         if Config.Player.NoclipHold then
             pcall(setNoclip, true)
@@ -3216,12 +3269,23 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
             pcall(setNoclip, not Config.Player.Noclip)
         end
         UI:RefreshAll()
+    end
 
-    elseif key == Config.Keybinds.Fullbright then
-        local value = not Config.Player.Fullbright
-        setPath("Player.Fullbright", value)
-        UI:RefreshAll()
-        pcall(setFullbright, value)
+    -- Everything else goes through the keybind registry, so every toggle and
+    -- every button you bound works. The four reserved keys above either are not
+    -- a plain toggle (menu, unload) or have hold behaviour (aim, noclip).
+    if key == Config.Keybinds.MenuToggle or key == Config.Keybinds.Unload
+        or key == Config.Keybinds.AimToggle or key == Config.Keybinds.Noclip then
+        return
+    end
+
+    for name, action in pairs(UI.keyActions) do
+        local bound = Config.Keybinds[name]
+        if bound and bound == key then
+            action.fire()
+            UI:RefreshAll()
+            toast(action.text, Theme.accent)
+        end
     end
 end))
 

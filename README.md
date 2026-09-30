@@ -46,6 +46,10 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-
 | `Delete` | unload (same as the button in Settings → Script) |
 
 To rebind: click the key button on the right of a switch, then press the new key.
+**Every switch and every button has such a key slot.** Only these five come with a default
+(`K`, `RightShift`, `V`, `N`, `B`); everything else — the aim options, the ESP elements, the player
+list, the movement and utility features, the staff detector and every action button — shows `-`
+and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 ## Options
 
