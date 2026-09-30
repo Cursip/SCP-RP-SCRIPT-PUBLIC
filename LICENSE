@@ -2,12 +2,6 @@ MIT License
 
 Copyright (c) 2026 Cursip
 
-Scope: this license covers only the parts of this repository that were written for this project
-(the mod menu and its UI library, the element binders, the player list, the utility, movement,
-staff detector, camera assist and config/preset system, the loader and the documentation).
-Code merged in from other authors is excluded and remains under its authors' terms - see
-THIRD-PARTY-NOTICES.md.
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

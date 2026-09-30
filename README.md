@@ -176,8 +176,8 @@ authors and want a change, a different credit or a removal, please open an issue
 ## Licensing
 
 The parts written for this project (menu and UI library, binders, player list, utility, movement,
-staff detector, camera assist, config/preset system, loader, docs) are **MIT** licensed — see
-[LICENSE](LICENSE).
+staff detector, camera assist, config/preset system, loader, docs) are **MIT** licensed — the
+[LICENSE](LICENSE) file holds the plain MIT text so it stays machine readable.
 
 The merged-in parts are **not** covered by that license: this project cannot license code it does
 not own. The silent aim code belongs to sneakygoober, the ESP code to goatd, and no rights in them

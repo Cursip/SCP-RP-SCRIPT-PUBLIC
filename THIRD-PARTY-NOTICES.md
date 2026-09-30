@@ -3,6 +3,10 @@
 Parts of `silent_aim_esp_merged.lua` are **not** from this repository. Copyright in those parts
 stays with their authors; they are merged here without any claim of ownership.
 
+The [LICENSE](LICENSE) of this repository is the MIT text and is granted **only** for the parts
+written for this project. It is deliberately kept as the plain MIT text so that it stays machine
+readable; the exclusions live here, because a license cannot cover code its licensor does not own.
+
 | Part | Author | Original listing |
 |---|---|---|
 | Silent aim: `BulletHit` hook, target finder, aim UI | **sneakygoober** | "Silent Aim Keyless" |
