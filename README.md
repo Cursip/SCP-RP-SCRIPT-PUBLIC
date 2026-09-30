@@ -79,6 +79,11 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 **Fun** (own tab) — and the honest boundary of what a client script can do
 - **animation player**: pick one of the animations the game itself ships in the character's `Animate` script (`dance1`, `wave`, `laugh`, `sit`, `run`, …) and play it on your character. This is the *only* prank here that other players see, because a character's animation state is sent by that character's own client
+- **SCP-173 mode**: while another player faces you with a clear line of sight your movement stops and your animation tracks freeze (the idle breathing too, so it looks like a statue). A status line names who is watching
+- **SCP-096 mode**: shares that line of sight check, but plays a chosen animation at double speed and announces who saw your face, with an optional charge towards them
+- **Echo**: records where you walk and replays it — the character follows the recorded path alone. Its step is bound late in the frame (priority 1950) so its `Move()` wins over the control module, which is what makes it look like walking instead of gliding
+- **Mimic**: reads which animations the nearest player is playing and plays the same ones on your character, including their playback speed (4 syncs per second)
+- **movement pranks**: ice mode (friction near zero, so you slide), moonwalk (velocity inverted from the humanoid's move direction), marionette (`PlatformStand` plus angular velocity, so you flop), moon gravity (local gravity slider)
 - **local gags**: fake breach alert and fake staff warning banner (duration slider) — for screenshots and videos; nothing in the game world changes and no other player sees it
 - **not possible client-side, so not built**: giving items, spawning objects for others, triggering game events, moving or teleporting other players, faking chat messages. All of that is server-authoritative: a client can only *ask* the server through remotes, and a request the game does not validate would be abuse of that game's code — not a feature, and the fastest way to get banned here. Anything that claims to do it either only changes your own screen or is exploiting a server bug
 

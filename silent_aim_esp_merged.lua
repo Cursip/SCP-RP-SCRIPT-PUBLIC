@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.2 (2026-09-30)"
+local BUILD = "v4.3 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -769,6 +769,17 @@ local Config = {
         StatueRange = 250,
         Spin = false,
         SpinSpeed = 720,
+        SCP096 = false,
+        RageAnimation = "laugh",
+        RageCharge = false,
+        EchoSeconds = 10,
+        Mimic = false,
+        MimicRange = 60,
+        Ice = false,
+        Moonwalk = false,
+        Marionette = false,
+        MoonGravity = false,
+        Gravity = 60,
     },
     Utility = {
         AntiAFK = false,
@@ -2439,6 +2450,24 @@ end
 
 local function statueStep()
     local label = statueLabel()
+    local wantWatcher = Config.Fun.SCP173 or Config.Fun.SCP096
+    if not wantWatcher then
+        if Statue.frozen then
+            Statue.frozen = false
+            freezeAnimationTracks(false)
+        end
+        Statue.watchedBy = nil
+        if label then label.Visible = false end
+        return
+    end
+
+    -- the watcher check is shared by 173 and 096, so it runs for either of them
+    local now = os.clock()
+    if now >= Statue.nextCheck then
+        Statue.nextCheck = now + 0.1
+        Statue.watchedBy = watcherName()
+    end
+
     if not Config.Fun.SCP173 then
         if Statue.frozen then
             Statue.frozen = false
@@ -2446,12 +2475,6 @@ local function statueStep()
         end
         if label then label.Visible = false end
         return
-    end
-
-    local now = os.clock()
-    if now >= Statue.nextCheck then
-        Statue.nextCheck = now + 0.1
-        Statue.watchedBy = watcherName()
     end
 
     if Statue.watchedBy then
@@ -2501,6 +2524,363 @@ local function spinStep(dt: number)
     hum.AutoRotate = false
     Statue.spinAngle = (Statue.spinAngle + math.rad(Config.Fun.SpinSpeed) * dt) % (math.pi * 2)
     hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(Config.Fun.SpinSpeed) * dt, 0)
+end
+
+--=====================================================================
+-- [10h] MORE PRANKS: 096, echo, mimic, ice, moonwalk, marionette, gravity
+--=====================================================================
+local Pranks = {
+    rageTrack = nil,
+    rageFor = nil,
+    mimicTracks = {},
+    mimicAt = 0,
+    iceSaved = setmetatable({}, { __mode = "k" }),
+    platformStand = false,
+    savedGravity = nil,
+}
+
+local function ownCharacter(): (Model?, Humanoid?, BasePart?)
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if char and hum and hrp then
+        return char, hum, hrp
+    end
+    return nil, nil, nil
+end
+
+-- ------------------------------------------------------------ SCP-096
+local function stopRage()
+    if Pranks.rageTrack then
+        pcall(function() Pranks.rageTrack:Stop() end)
+        Pranks.rageTrack = nil
+    end
+    Pranks.rageFor = nil
+end
+
+local function rageStep()
+    local char, hum, hrp = ownCharacter()
+    if not (char and hum and hrp) then
+        stopRage()
+        return
+    end
+    if not Config.Fun.SCP096 then
+        stopRage()
+        return
+    end
+
+    local watchedBy = Statue.watchedBy
+    if not watchedBy then
+        if Pranks.rageFor then
+            stopRage()
+            toast("096 MODE - nobody is looking any more", Theme.dim)
+        end
+        return
+    end
+
+    if Pranks.rageFor ~= watchedBy then
+        stopRage()
+        Pranks.rageFor = watchedBy
+        local animator = hum:FindFirstChildOfClass("Animator")
+        local script = char:FindFirstChild("Animate")
+        local anim = script and script:FindFirstChild(Config.Fun.RageAnimation)
+        if animator and anim then
+            local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
+            if ok and track then
+                Pranks.rageTrack = track
+                pcall(function()
+                    track.Priority = Enum.AnimationPriority.Action4
+                    track.Looped = true
+                    track:Play()
+                    track:AdjustSpeed(2.2)
+                end)
+            end
+        end
+        toast(("096 MODE - %s saw your face"):format(watchedBy), Theme.danger)
+    end
+
+    if Config.Fun.RageCharge then
+        local target = Players:FindFirstChild(watchedBy)
+        local targetChar = target and target.Character
+        local targetHrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        if targetHrp then
+            local delta = targetHrp.Position - hrp.Position
+            delta = Vector3.new(delta.X, 0, delta.Z)
+            if delta.Magnitude > 1 then
+                pcall(function() hum:Move(delta.Unit, false) end)
+            end
+        end
+    end
+end
+
+-- ------------------------------------------------------------ echo
+local Echo = { recording = false, playing = false, samples = {}, startedAt = 0, playStarted = 0, index = 1 }
+
+local function echoRecordStart()
+    local _, _, hrp = ownCharacter()
+    if not hrp then
+        toast("No character to record", Theme.danger)
+        return
+    end
+    Echo.samples = {}
+    Echo.recording = true
+    Echo.playing = false
+    Echo.startedAt = os.clock()
+    toast(("Recording %.0f s - walk around now"):format(Config.Fun.EchoSeconds), Theme.accent)
+end
+
+local function echoPlay()
+    if #Echo.samples < 2 then
+        toast("Nothing recorded yet", Theme.danger)
+        return
+    end
+    Echo.recording = false
+    Echo.playing = true
+    Echo.playStarted = os.clock()
+    Echo.index = 1
+    toast(("Echo: replaying %d points - your character walks alone"):format(#Echo.samples), Theme.accent)
+end
+
+local function echoClear()
+    Echo.recording = false
+    Echo.playing = false
+    Echo.samples = {}
+    toast("Echo cleared", Theme.dim)
+end
+
+local function echoStep()
+    if Echo.recording then
+        local _, _, hrp = ownCharacter()
+        local elapsed = os.clock() - Echo.startedAt
+        if not hrp or elapsed > Config.Fun.EchoSeconds then
+            Echo.recording = false
+            toast(("Recorded %d points"):format(#Echo.samples), Theme.success)
+        else
+            local last = Echo.samples[#Echo.samples]
+            if not last or (hrp.Position - last.pos).Magnitude > 0.5 then
+                table.insert(Echo.samples, { pos = hrp.Position, t = elapsed })
+            end
+        end
+    end
+
+    if not Echo.playing then return end
+    local _, hum, hrp = ownCharacter()
+    if not (hum and hrp) then
+        Echo.playing = false
+        return
+    end
+    local elapsed = os.clock() - Echo.playStarted
+    while Echo.index < #Echo.samples and Echo.samples[Echo.index].t < elapsed do
+        Echo.index += 1
+    end
+    if Echo.index >= #Echo.samples then
+        Echo.playing = false
+        toast("Echo finished", Theme.dim)
+        return
+    end
+    local delta = Echo.samples[Echo.index].pos - hrp.Position
+    delta = Vector3.new(delta.X, 0, delta.Z)
+    if delta.Magnitude > 1.5 then
+        pcall(function() hum:Move(delta.Unit, false) end)
+    else
+        Echo.index += 1
+    end
+end
+
+pcall(function()
+    RunService:UnbindFromRenderStep("ScpEcho")
+end)
+-- bound late so our Move() wins over the control module for that frame
+pcall(function()
+    RunService:BindToRenderStep("ScpEcho", 1950, function()
+        pcall(echoStep)
+    end)
+end)
+
+-- ------------------------------------------------------------ mimic
+local function stopMimic()
+    for id, track in pairs(Pranks.mimicTracks) do
+        pcall(function() track:Stop() end)
+        Pranks.mimicTracks[id] = nil
+    end
+end
+
+local function mimicStep()
+    local char, hum = ownCharacter()
+    if not (char and hum) then
+        stopMimic()
+        return
+    end
+    if not Config.Fun.Mimic then
+        stopMimic()
+        return
+    end
+    local now = os.clock()
+    if now < Pranks.mimicAt then return end
+    Pranks.mimicAt = now + 0.25
+
+    local best, bestDistance = nil, Config.Fun.MimicRange
+    local myHrp = char:FindFirstChild("HumanoidRootPart")
+    for _, p in next, Players:GetPlayers() do
+        if p ~= plr then
+            local otherChar = p.Character
+            local otherHrp = otherChar and otherChar:FindFirstChild("HumanoidRootPart")
+            if myHrp and otherHrp then
+                local distance = (otherHrp.Position - myHrp.Position).Magnitude
+                if distance < bestDistance then
+                    best, bestDistance = p, distance
+                end
+            end
+        end
+    end
+    if not best then
+        stopMimic()
+        return
+    end
+
+    local otherChar = best.Character
+    local otherHum = otherChar and otherChar:FindFirstChildOfClass("Humanoid")
+    local otherAnimator = otherHum and otherHum:FindFirstChildOfClass("Animator")
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not (otherAnimator and animator) then return end
+
+    local ok, tracks = pcall(function() return otherAnimator:GetPlayingAnimationTracks() end)
+    if not ok or type(tracks) ~= "table" then return end
+
+    local wanted = {}
+    local count = 0
+    for _, track in ipairs(tracks) do
+        local anim = track.Animation
+        local id = anim and anim.AnimationId
+        if type(id) == "string" and #id > 0 and count < 6 then
+            wanted[id] = track.Speed
+            count += 1
+        end
+    end
+
+    for id, track in pairs(Pranks.mimicTracks) do
+        if wanted[id] == nil then
+            pcall(function() track:Stop() end)
+            Pranks.mimicTracks[id] = nil
+        end
+    end
+
+    for id, speed in pairs(wanted) do
+        local track = Pranks.mimicTracks[id]
+        if not track then
+            local loaded, newTrack = pcall(function()
+                local anim = Instance.new("Animation")
+                anim.AnimationId = id
+                return animator:LoadAnimation(anim)
+            end)
+            if loaded and newTrack then
+                track = newTrack
+                Pranks.mimicTracks[id] = track
+                pcall(function()
+                    track.Priority = Enum.AnimationPriority.Action3
+                    track.Looped = true
+                    track:Play()
+                end)
+            end
+        end
+        if track then
+            pcall(function() track:AdjustSpeed(speed) end)
+        end
+    end
+end
+
+-- ------------------------------------------------------------ ice
+local function setIce(on: boolean)
+    local char = plr.Character
+    if not char then return end
+    if on then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if Pranks.iceSaved[part] == nil then
+                    Pranks.iceSaved[part] = part.CustomPhysicalProperties
+                end
+                pcall(function()
+                    part.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.02, 0.2, 1, 1)
+                end)
+            end
+        end
+        toast("Ice mode: friction off, good luck stopping", Theme.accent)
+    else
+        for part, saved in pairs(Pranks.iceSaved) do
+            if typeof(part) == "Instance" and part.Parent then
+                pcall(function() part.CustomPhysicalProperties = saved end)
+            end
+        end
+        table.clear(Pranks.iceSaved)
+        toast("Ice mode off", Theme.dim)
+    end
+end
+
+-- ------------------------------------------------------------ moonwalk
+local function moonwalkStep()
+    if not Config.Fun.Moonwalk then return end
+    local _, hum, hrp = ownCharacter()
+    if not (hum and hrp) then return end
+    local direction = hum.MoveDirection
+    if direction.Magnitude < 0.01 then return end
+    local speed = math.max(hum.WalkSpeed, 8)
+    local velocity = hrp.AssemblyLinearVelocity
+    hrp.AssemblyLinearVelocity = Vector3.new(-direction.X * speed, velocity.Y, -direction.Z * speed)
+end
+
+-- ------------------------------------------------------------ marionette
+local function marionetteStep()
+    local _, hum, hrp = ownCharacter()
+    if not (hum and hrp) then return end
+    if Config.Fun.Marionette then
+        if not Pranks.platformStand then
+            Pranks.platformStand = true
+            pcall(function() hum.PlatformStand = true end)
+        end
+        pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0, 5, 3) end)
+    elseif Pranks.platformStand then
+        Pranks.platformStand = false
+        pcall(function() hum.PlatformStand = false end)
+        pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end)
+    end
+end
+
+-- ------------------------------------------------------------ gravity
+local function gravityStep()
+    if Config.Fun.MoonGravity then
+        if Pranks.savedGravity == nil then
+            Pranks.savedGravity = workspace.Gravity
+        end
+        workspace.Gravity = Config.Fun.Gravity
+    elseif Pranks.savedGravity ~= nil then
+        workspace.Gravity = Pranks.savedGravity
+        Pranks.savedGravity = nil
+    end
+end
+
+-- everything that has to be undone when a prank is switched off or the script
+-- is unloaded
+local function releasePranks()
+    stopRage()
+    stopMimic()
+    Echo.recording = false
+    Echo.playing = false
+    if Pranks.platformStand then
+        Pranks.platformStand = false
+        local _, hum, hrp = ownCharacter()
+        if hum then pcall(function() hum.PlatformStand = false end) end
+        if hrp then pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end) end
+    end
+    if Pranks.savedGravity ~= nil then
+        workspace.Gravity = Pranks.savedGravity
+        Pranks.savedGravity = nil
+    end
+    for part, saved in pairs(Pranks.iceSaved) do
+        if typeof(part) == "Instance" and part.Parent then
+            pcall(function() part.CustomPhysicalProperties = saved end)
+        end
+    end
+    table.clear(Pranks.iceSaved)
 end
 
 --=====================================================================
@@ -3261,6 +3641,32 @@ local menuOk, menuErr = pcall(function()
         pr:Slider({ text = "Spin speed", path = "Fun.SpinSpeed", min = 90, max = 3600, step = 90, suffix = " deg/s" })
         pr:Label("173 mode stops your movement and freezes your animation tracks the moment another player faces you with a clear line of sight - the idle breathing stops as well, so you look like a statue until nobody is watching. It is an approximation: their camera cannot be read from here, so their body direction stands in for it.")
 
+        local r = funTab:Section("SCP-096 mode")
+        r:Toggle({ text = "096 mode: rage when somebody looks at you", path = "Fun.SCP096" })
+        r:Dropdown({ text = "Rage animation", path = "Fun.RageAnimation", options = funAnimationNames() })
+        r:Toggle({ text = "Also charge at whoever saw you", path = "Fun.RageCharge" })
+        r:Label("Uses the same line of sight check as 173 mode, but plays the animation at double speed instead of freezing. Charge takes over your movement while someone is watching.")
+
+        local e = funTab:Section("Echo (your character walks alone)")
+        e:Slider({ text = "Recording length", path = "Fun.EchoSeconds", min = 3, max = 30, step = 1, suffix = " s" })
+        e:Button({ text = "Record movement", callback = echoRecordStart })
+        e:Button({ text = "Play back", callback = echoPlay })
+        e:Button({ text = "Clear recording", callback = echoClear })
+        e:Label("Records where you walk, then replays it: the character moves along that path while you stand still. The playback is bound late in the frame so it wins over your own input.")
+
+        local m2 = funTab:Section("Mimic (copy the nearest player)")
+        m2:Toggle({ text = "Mimic animations of the nearest player", path = "Fun.Mimic" })
+        m2:Slider({ text = "Mimic range", path = "Fun.MimicRange", min = 10, max = 200, step = 10, suffix = " studs" })
+        m2:Label("Reads which animations that player is playing and plays the same ones on your character, including their speed. Four syncs per second.")
+
+        local mp = funTab:Section("Movement pranks")
+        mp:Toggle({ text = "Ice mode (no friction, you slide)", path = "Fun.Ice", onChanged = setIce })
+        mp:Toggle({ text = "Moonwalk (walk backwards while facing forward)", path = "Fun.Moonwalk" })
+        mp:Toggle({ text = "Marionette (dangle and tumble)", path = "Fun.Marionette" })
+        mp:Toggle({ text = "Moon gravity", path = "Fun.MoonGravity" })
+        mp:Slider({ text = "Gravity", path = "Fun.Gravity", min = 20, max = 250, step = 10 })
+        mp:Label("All of these change only your own character, whose physics and animation state are simulated on your client - which is exactly why other players see the result. Everything is restored when switched off or on unload.")
+
         local g = funTab:Section("Local gags (only you see them)")
         g:Slider({ text = "Gag duration", path = "Fun.GagSeconds", min = 1, max = 20, step = 1, suffix = " s" })
         g:Button({ text = "Fake breach alert", callback = function()
@@ -3641,6 +4047,11 @@ keepConnection(RunService.RenderStepped:Connect(function(dt)
     pcall(function()
         statueStep()
         spinStep(dt or 0)
+        rageStep()
+        mimicStep()
+        moonwalkStep()
+        marionetteStep()
+        gravityStep()
     end)
 
     local ok, err = pcall(function()
@@ -3822,6 +4233,7 @@ end))
 keepConnection(plr.CharacterAdded:Connect(function(char)
     Noclip.saved = nil
     funStop()
+    pcall(releasePranks)
     pcall(bindCharacter, char)
     if Config.Player.Noclip then
         task.wait(1)
@@ -3871,6 +4283,10 @@ do
         pcall(updateHitbox)
         pcall(setRemoveFog, false)
         funStop()
+        pcall(releasePranks)
+        pcall(function()
+            RunService:UnbindFromRenderStep("ScpEcho")
+        end)
         pcall(setNoclip, false)
         pcall(setFullbright, false)
         pcall(setFpsBoost, false)
