@@ -168,5 +168,17 @@ Everything else is from this repository: the mod menu and its UI library, the op
 list, the utility and movement features, the staff detector, the camera assist and the
 config/preset system.
 
-No ownership is claimed over the merged-in code. If you are one of the authors and want a change,
-a different credit or a removal, please open an issue — see [SECURITY.md](SECURITY.md).
+No ownership is claimed over the merged-in code. Attribution, authorship and reuse rules for those
+parts are spelled out in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). If you are one of the
+authors and want a change, a different credit or a removal, please open an issue — see
+[SECURITY.md](SECURITY.md).
+
+## Licensing
+
+No license is declared for the merged file as a whole, because large parts of it are other authors'
+code (see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) and this project cannot license what it
+does not own. Without a license the default applies: the code can be viewed and forked through
+GitHub, but not reused, redistributed or relicensed.
+
+The parts written for this project (menu, binders, player list, utility, movement, staff detector,
+camera assist, config system) can be licensed separately if you want that — open an issue.
