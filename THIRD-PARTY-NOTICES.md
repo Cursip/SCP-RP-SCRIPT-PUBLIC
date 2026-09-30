@@ -17,9 +17,9 @@ the player list, the utility, movement, staff detector, camera assist and the co
 ## What this means for reuse
 
 - The third-party parts **may not be relicensed** by this project, and no license text here grants
-  rights in them.
-- Any license this repository declares covers **only** the parts written for this project. The
-  third-party parts stay under whatever terms their authors set.
+  rights in them. The [MIT license](LICENSE) of this repository covers only the parts written for
+  this project.
+- The third-party parts stay under whatever terms their authors set.
 - Authorship of those parts stays with their authors regardless of any license text in this
   repository (German law: §13 and §29 UrhG — authorship is not transferable). The attribution in the
   README and in the file header is intentional and must not be removed.

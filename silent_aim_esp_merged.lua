@@ -37,6 +37,10 @@
     sneekysscripts.uk only hosts/mirrors those files, it is not their author.
     Menu, options, player list, utility, movement, staff detector, camera assist
     and the config/preset system are from this repository.
+
+  License
+    Our own parts are MIT (see LICENSE). The merged-in parts are not covered by
+    that license and stay with their authors (see THIRD-PARTY-NOTICES.md).
 =====================================================================]]
 
 --=====================================================================

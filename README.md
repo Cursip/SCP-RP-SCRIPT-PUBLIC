@@ -175,10 +175,10 @@ authors and want a change, a different credit or a removal, please open an issue
 
 ## Licensing
 
-No license is declared for the merged file as a whole, because large parts of it are other authors'
-code (see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) and this project cannot license what it
-does not own. Without a license the default applies: the code can be viewed and forked through
-GitHub, but not reused, redistributed or relicensed.
+The parts written for this project (menu and UI library, binders, player list, utility, movement,
+staff detector, camera assist, config/preset system, loader, docs) are **MIT** licensed — see
+[LICENSE](LICENSE).
 
-The parts written for this project (menu, binders, player list, utility, movement, staff detector,
-camera assist, config system) can be licensed separately if you want that — open an issue.
+The merged-in parts are **not** covered by that license: this project cannot license code it does
+not own. The silent aim code belongs to sneakygoober, the ESP code to goatd, and no rights in them
+are granted here — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
