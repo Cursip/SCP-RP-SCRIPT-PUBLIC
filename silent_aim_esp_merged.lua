@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.5 (2026-09-30)"
+local BUILD = "v3.6 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -689,7 +689,7 @@ local Config = {
     Menu = {
         Visible = true,
         Scale = 1,
-        BlockCameraZoom = false,
+        BlockCameraZoom = true,
     },
     Aim = {
         Enabled = true,
@@ -2985,8 +2985,8 @@ local menuOk, menuErr = pcall(function()
         m:Slider({ text = "UI scale", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
             onChanged = function(value) window:SetScale(value) end })
         m:Toggle({ text = "Watermark HUD", path = "Misc.Watermark" })
-        m:Toggle({ text = "Wheel over the menu does not zoom the camera", path = "Menu.BlockCameraZoom" })
-        m:Label("Off by default: in v3.4 the wheel sink landed beside the menu instead of on it. Turn it on and watch the Debug tab - it shows \"menu hover=true\" while the pointer is inside the window, so you can see whether the detection is right.")
+        m:Toggle({ text = "Wheel while the menu is open does not zoom the camera", path = "Menu.BlockCameraZoom" })
+        m:Label("While the menu is open the wheel scrolls the menu and the character stays put. The binding only exists while the menu is open, so zoom behaves exactly as before once it is closed.")
 
         local pr = settingsTab:Section("Presets")
         pr:Dropdown({ text = "Slot", path = "Profile.Slot", options = { "Slot 1", "Slot 2", "Slot 3" } })
@@ -3051,51 +3051,41 @@ end
 -- [12] RENDER AND INPUT LOOPS
 --=====================================================================
 
--- While the pointer is over the menu, the wheel should scroll the menu only.
--- "Over the menu" is asked through the GUI system itself:
--- PlayerGui:GetGuiObjectsAtPosition takes the same screen coordinates as
--- GetMouseLocation, so nothing here depends on the GUI inset or the UI scale.
--- The earlier version compared the pointer with the window rectangle, which is
--- exactly where a 36 px inset makes the area land next to the window instead of
--- on it - the sink then fired beside the menu and left the zoom alone on it.
-local function pointerOverMenu(): boolean
-    local win = UI.window and UI.window.frame
-    if not (win and UI.gui and UI.gui.Enabled and win.Visible) then return false end
+-- While the menu is open the wheel belongs to the menu. The action is bound
+-- when the menu opens and unbound again when it closes, so with the menu closed
+-- nothing of ours sits in the input path at all - that is also why the earlier
+-- attempt (a permanent binding that guessed where the pointer was) could make
+-- the zoom feel wrong outside. No coordinate math is involved any more.
+local wheelBound = false
 
-    local pointer = UIS:GetMouseLocation()
-    local ok, objects = pcall(function()
-        return plr.PlayerGui:GetGuiObjectsAtPosition(pointer.X, pointer.Y)
-    end)
-    if ok and type(objects) == "table" then
-        for _, obj in ipairs(objects) do
-            if obj == win or obj:IsDescendantOf(win) then
-                return true
-            end
-        end
-        return false
+local function setWheelSink(on: boolean)
+    if on == wheelBound then return end
+    wheelBound = on
+    if on then
+        pcall(function()
+            ContextActionService:BindActionAtPriority(
+                "ScpMenuWheel",
+                function(_, inputState)
+                    if inputState == Enum.UserInputState.Change then
+                        return Enum.ContextActionResult.Sink
+                    end
+                    return Enum.ContextActionResult.Pass
+                end,
+                false,
+                math.huge,
+                Enum.UserInputType.MouseWheel
+            )
+        end)
+    else
+        pcall(function()
+            ContextActionService:UnbindAction("ScpMenuWheel")
+        end)
     end
-
-    -- fallback when the hit test is unavailable
-    local pos, size = win.AbsolutePosition, win.AbsoluteSize
-    return pointer.X >= pos.X and pointer.X <= pos.X + size.X
-        and pointer.Y >= pos.Y and pointer.Y <= pos.Y + size.Y
 end
 
-pcall(function()
-    ContextActionService:BindActionAtPriority(
-        "ScpMenuWheel",
-        function(_, inputState)
-            if inputState == Enum.UserInputState.Change
-                and Config.Menu.BlockCameraZoom and pointerOverMenu() then
-                return Enum.ContextActionResult.Sink
-            end
-            return Enum.ContextActionResult.Pass
-        end,
-        false,
-        math.huge,
-        Enum.UserInputType.MouseWheel
-    )
-end)
+local function updateWheelSink()
+    setWheelSink(Config.Menu.BlockCameraZoom and UI.gui ~= nil and UI.gui.Enabled == true)
+end
 local function ensureAimVisuals()
     if State.fovFrame then return end
     local parent = State.visualsGui or UI.gui or guiParent()
@@ -3206,9 +3196,9 @@ local function updateDebugTab()
                 tostring(hookfunction ~= nil), tostring(getsenv ~= nil),
                 tostring(AIM_DEBUG.controller), tostring(AIM_DEBUG.bulletHit), tostring(AIM_DEBUG.uiLoaded)
             )
-            labels.calls.Text = ("getTarget: calls=%d  with target=%d  |  menu hover=%s  wheel sink=%s"):format(
+            labels.calls.Text = ("getTarget: calls=%d  with target=%d  |  menu open=%s  wheel sink=%s"):format(
                 AIM_DEBUG.calls, AIM_DEBUG.hits,
-                tostring(pointerOverMenu()), tostring(Config.Menu.BlockCameraZoom)
+                tostring(UI.gui ~= nil and UI.gui.Enabled == true), tostring(wheelBound)
             )
             labels.last.Text = "Last target: " .. AIM_DEBUG.lastTarget
             local parts = {}
@@ -3260,6 +3250,9 @@ keepConnection(RunService.RenderStepped:Connect(function()
     end
 
     frameCounter += 1
+    -- binds the wheel block while the menu is open and releases it when it
+    -- closes; a no-op unless that state actually changed
+    updateWheelSink()
     if frameCounter % 20 == 0 then
         pcall(function()
             Stats.ping = getPing()
