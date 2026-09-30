@@ -142,13 +142,27 @@ ours and collects nothing. What it *can* do is break the rules of the game you u
 Terms of Use and the game's own rules — and that is what can get an account banned, not GitHub.
 No warranty, use at your own risk.
 
-It builds on code from `sneekysscripts.uk` (see Credits) and claims no ownership of that code. If
-you are a rights holder and want something changed or removed, please open an issue on this
-repository before filing an abuse report — see [SECURITY.md](SECURITY.md).
+It builds on code by other authors, fetched from the mirror `sneekysscripts.uk` (see Credits), and
+claims no ownership of that code. If you are a rights holder and want something changed or removed,
+please open an issue on this repository before filing an abuse report — see
+[SECURITY.md](SECURITY.md).
 
 ## Credits
 
-The silent aim part comes from `sneekysscripts.uk` (`SCP_Roleplay/main.luau`,
-`UIs/silent_aim.luau`, `Teams.luau`); the ESP part is the separately supplied
-"DeepHat Player-Only ESP". This repo merges both and adds the menu, the options and the extra
-features.
+This project merges two community scripts and adds its own menu and features. Per the upload
+listings, the merged-in parts come from these authors:
+
+| Part | Author | Original listing |
+|---|---|---|
+| Silent aim (`BulletHit` hook, target finder, aim UI) | **sneakygoober** | "Silent Aim Keyless" |
+| Player ESP (highlight, team colours) | **goatd** | "simple esp (team color) UPDATED" |
+
+`sneekysscripts.uk` is **only the host/mirror** these files were served from — it is not the author
+of that code.
+
+Everything else is from this repository: the mod menu and its UI library, the options, the player
+list, the utility and movement features, the staff detector, the camera assist and the
+config/preset system.
+
+No ownership is claimed over the merged-in code. If you are one of the authors and want a change,
+a different credit or a removal, please open an issue — see [SECURITY.md](SECURITY.md).

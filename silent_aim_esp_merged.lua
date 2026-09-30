@@ -30,6 +30,13 @@
              onChanged = function(v) setMyFeature(v) end,
          }
     Saving/loading and the keybind come for free.
+
+  Credits - the merged-in parts are not ours:
+    silent aim (BulletHit hook, target finder, aim UI): sneakygoober, "Silent Aim Keyless"
+    player ESP (highlight, team colours):              goatd, "simple esp (team color)"
+    sneekysscripts.uk only hosts/mirrors those files, it is not their author.
+    Menu, options, player list, utility, movement, staff detector, camera assist
+    and the config/preset system are from this repository.
 =====================================================================]]
 
 --=====================================================================
