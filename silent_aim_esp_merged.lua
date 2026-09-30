@@ -1338,6 +1338,17 @@ notifyHolder = new("Frame", {
 }, {})
 list(notifyHolder, 6)
 
+-- Config zuerst laden und das Aim installieren, BEVOR das Menue gebaut wird:
+-- so haengt das Treffen nicht daran, ob der UI-Aufbau fehlerfrei durchlaeuft.
+pcall(function()
+    loadConfig(true)
+end)
+syncAimGlobals()
+if Config.Aim.Enabled and not State.hookInstalled then
+    local ok, reason = pcall(installHook)
+    if not ok then AIM_DEBUG.hook = "Fehler: " .. tostring(reason) end
+end
+
 local window = UI:Window({
     title = "SCP:RP",
     subtitle = executor .. "  |  " .. tostring(#Players:GetPlayers()) .. " Spieler",
@@ -2258,10 +2269,6 @@ end))
 -- [13] START / UNLOAD
 --=====================================================================
 do
-    pcall(function()
-        loadConfig(true)
-    end)
-
     syncAimGlobals()
     window:SetScale(Config.Menu.Scale)
     UI.gui.Enabled = Config.Menu.Visible
@@ -2269,7 +2276,8 @@ do
     if Config.Player.Noclip then pcall(setNoclip, true) end
     if Config.Player.Fullbright then pcall(setFullbright, true) end
 
-    if Config.Aim.Enabled then
+    -- Hook kam schon in [11] rein; hier nur noch ein Sicherheitsnetz
+    if Config.Aim.Enabled and not State.hookInstalled then
         local ok, reason = pcall(installHook)
         if not ok then
             AIM_DEBUG.hook = "Fehler: " .. tostring(reason)
