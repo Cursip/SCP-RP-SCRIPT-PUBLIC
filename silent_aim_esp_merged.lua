@@ -51,6 +51,7 @@ local UIS: UserInputService = cloneref(game:GetService("UserInputService"))
 local TweenService = cloneref(game:GetService("TweenService"))
 local HttpService = cloneref(game:GetService("HttpService"))
 local Lighting = cloneref(game:GetService("Lighting"))
+local TeleportService = cloneref(game:GetService("TeleportService"))
 
 local plr = Players.LocalPlayer
 local startedAt = os.clock()
@@ -94,7 +95,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.6 (2026-09-30)"
+local BUILD = "v2.7 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -653,6 +654,8 @@ local State = {
     fovFrame = nil,
     fovStroke = nil,
     infoLabel = nil,
+    noclipLabel = nil,
+    noclipSince = nil,
     visualsGui = nil,
     connections = {},
     unloaded = false,
@@ -673,6 +676,9 @@ local Config = {
     },
     Aim = {
         Enabled = true,
+        Mode = "Silent (BulletHit)",
+        Smoothness = 0.25,
+        AutoFire = false,
         HoldToAim = false,
         FOV = 300,
         ShowFOV = true,
@@ -714,11 +720,14 @@ local Config = {
     },
     Player = {
         Noclip = false,
+        NoclipHold = true,
+        NoclipMaxSeconds = 15,
         Fullbright = false,
     },
     Utility = {
         AntiAFK = false,
         FpsBoost = false,
+        CameraFOV = 0,
     },
     List = {
         Enabled = false,
@@ -1089,6 +1098,12 @@ end
 -- Without this hook the UI only draws tracers and nothing ever gets hit.
 local function installHook(): (boolean, string)
     AIM_DEBUG.hook = "not installed"
+
+    if Config.Aim.Mode ~= "Silent (BulletHit)" then
+        AIM_DEBUG.mode = "camera assist"
+        AIM_DEBUG.hook = "not needed (camera assist)"
+        return true, AIM_DEBUG.hook
+    end
 
     if PREFER_REMOTE_BUILD then
         local ok = pcall(function()
@@ -1548,11 +1563,21 @@ local function noclipApply()
     end
 end
 
+-- Noclip. Only parts that actually had collisions are touched and all of them
+-- are restored on release. Holding the key is the default so it cannot be left
+-- on by accident; toggle mode switches itself off after NoclipMaxSeconds, and
+-- a config never turns it on by itself.
 local function setNoclip(on: boolean)
     if on then
+        if Config.Player.Noclip then return end
+        Config.Player.Noclip = true
+        State.noclipSince = os.clock()
         noclipApply()
-        toast("Noclip ON (may be detected by anti-cheat)", Theme.success)
+        toast("Noclip ON - use it briefly and out of sight", Theme.danger)
     else
+        if not Config.Player.Noclip and not Noclip.saved then return end
+        Config.Player.Noclip = false
+        State.noclipSince = nil
         if Noclip.saved then
             for part in pairs(Noclip.saved) do
                 if typeof(part) == "Instance" and part.Parent then
@@ -1708,17 +1733,24 @@ local statsLabels = nil
 -- Applies everything that has a side effect. Used at start and after a config
 -- or preset is loaded, so a loaded file takes effect immediately.
 applyAllFeatures = function(quiet: boolean?)
+    -- a config must never switch noclip on by itself
+    local noclipWasOn = Config.Player.Noclip
+    Config.Player.Noclip = false
+
     SuppressToasts = quiet == true
     local ok, err = pcall(function()
         syncAimGlobals()
-        setNoclip(Config.Player.Noclip)
         setFullbright(Config.Player.Fullbright)
         setFpsBoost(Config.Utility.FpsBoost)
-        if Config.Aim.Enabled and not State.hookInstalled then
+        if Config.Aim.Enabled and Config.Aim.Mode == "Silent (BulletHit)" and not State.hookInstalled then
             installHook()
         end
     end)
     SuppressToasts = false
+
+    if noclipWasOn then
+        toast("Noclip in that file stays off - hold " .. Config.Keybinds.Noclip.Name .. " to use it", Theme.danger)
+    end
     if not ok then
         warn("[menu] applying settings failed: " .. tostring(err))
     end
@@ -1731,6 +1763,105 @@ local function updateStatsLabels()
     statsLabels.fps.Text = ("FPS: %d"):format(Stats.fps)
     statsLabels.uptime.Text = ("Server uptime: %d min"):format(math.floor(workspace.DistributedGameTime / 60))
     statsLabels.job.Text = ("Job: %s"):format(game.JobId)
+end
+
+--=====================================================================
+-- [10c] CAMERA ASSIST + AUTO FIRE + CAMERA FOV (works in any game)
+--=====================================================================
+-- Camera assist only turns your own camera, so it is not tied to SCP:RP. It is
+-- bound after the game's camera scripts so our CFrame wins for that frame.
+local function cameraAssistStep(dt: number)
+    local cam = currentCam()
+    if Config.Utility.CameraFOV > 0 then
+        cam.FieldOfView = Config.Utility.CameraFOV
+    end
+
+    local cfg = Config.Aim
+    if not cfg.Enabled or cfg.Mode ~= "Camera assist" then return end
+    if cfg.HoldToAim and not State.aimKeyDown then return end
+
+    local target = findTarget(cam.CFrame.Position, true)
+    if not target then return end
+    local delta = target.Position - cam.CFrame.Position
+    if delta.Magnitude < 1 then return end
+
+    local goal = CFrame.lookAt(cam.CFrame.Position, target.Position)
+    local alpha = 1 - (1 - math.clamp(cfg.Smoothness, 0.02, 1)) ^ (dt * 60)
+    cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+end
+
+local function autoFireStep()
+    local cfg = Config.Aim
+    if not (cfg.Enabled and cfg.AutoFire) then return end
+    if cfg.HoldToAim and not State.aimKeyDown then return end
+    if typeof(mouse1click) ~= "function" then return end
+
+    local cam = currentCam()
+    local target = findTarget(cam.CFrame.Position, true)
+    if not target then return end
+    local pos, onScreen = cam:WorldToViewportPoint(target.Position)
+    if not onScreen then return end
+    local centre = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    if (Vector2.new(pos.X, pos.Y) - centre).Magnitude > 12 then return end
+    pcall(mouse1click)
+end
+
+pcall(function()
+    RunService:UnbindFromRenderStep("ScpAimStep")
+end)
+pcall(function()
+    RunService:BindToRenderStep("ScpAimStep", Enum.RenderPriority.Camera.Value + 1, function(dt)
+        cameraAssistStep(dt)
+        autoFireStep()
+    end)
+end)
+
+-- Switching backends: the SCP-RP hook is restored when camera assist takes
+-- over and installed again when silent aim comes back.
+local function onAimModeChanged(value: string)
+    if value == "Camera assist" then
+        if State.hookInstalled and State.bulletHit and restorefunction then
+            pcall(restorefunction, State.bulletHit)
+        end
+        State.hookInstalled = false
+        AIM_DEBUG.hook = "restored (camera assist active)"
+        toast("Camera assist active - your camera turns to the target", Theme.accent)
+    elseif Config.Aim.Enabled and not State.hookInstalled then
+        local ok, reason = pcall(installHook)
+        toast("Hook: " .. tostring(reason), ok and Theme.success or Theme.danger)
+    end
+end
+
+local function rejoinServer()
+    local ok = pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, plr)
+    end)
+    toast(ok and "Rejoining this server..." or "Rejoin failed", ok and Theme.success or Theme.danger)
+end
+
+local function serverHop()
+    local ok, body = pcall(function()
+        return game:HttpGet("https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100")
+    end)
+    if not ok or type(body) ~= "string" then
+        toast("Server list unavailable", Theme.danger)
+        return
+    end
+    local ids = {}
+    for id in string.gmatch(body, '"id":"(%x[%x%-]+)"') do
+        if id ~= game.JobId then
+            table.insert(ids, id)
+        end
+    end
+    if #ids == 0 then
+        toast("No other server found", Theme.danger)
+        return
+    end
+    local pick = ids[math.random(1, #ids)]
+    local teleported = pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, pick, plr)
+    end)
+    toast(teleported and "Hopping to another server..." or "Hop failed", teleported and Theme.success or Theme.danger)
 end
 
 --=====================================================================
@@ -2333,6 +2464,10 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Never target researchers", path = "Aim.IgnoreRoles" })
         s:Label("Role words: " .. table.concat(Config.Aim.RoleIgnoreList, ", "))
         s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
+        s:Dropdown({ text = "Aim mode", path = "Aim.Mode", options = { "Silent (BulletHit)", "Camera assist" }, onChanged = onAimModeChanged })
+        s:Slider({ text = "Camera assist smoothness", path = "Aim.Smoothness", min = 0.05, max = 1, step = 0.05, decimals = 2 })
+        s:Toggle({ text = "Auto fire when on target (risky)", path = "Aim.AutoFire" })
+        s:Label("Silent = SCP:RP only (hooks Controller.BulletHit). Camera assist = works in any game, it turns your own camera.")
 
         local v = aimTab:Section("Visuals")
         v:Toggle({ text = "FOV circle", path = "Aim.ShowFOV" })
@@ -2383,9 +2518,13 @@ local menuOk, menuErr = pcall(function()
     do
         local s = playerTab:Section("Movement")
         s:Toggle({
-            text = "Noclip", path = "Player.Noclip", keybind = "Noclip",
+            text = "Noclip (key: " .. Config.Keybinds.Noclip.Name .. ")", path = "Player.Noclip", keybind = "Noclip",
             onChanged = function(value) setNoclip(value) end,
         })
+        s:Toggle({ text = "Hold key for noclip (safer)", path = "Player.NoclipHold" })
+        s:Slider({ text = "Noclip auto-off in toggle mode", path = "Player.NoclipMaxSeconds", min = 5, max = 120, step = 5, suffix = " s" })
+        s:Button({ text = "Force noclip off", color = Theme.danger, callback = function() setNoclip(false) end })
+        s:Label("Noclip is never switched on by a config or preset. The indicator shows while it is active.")
         s:Label("Template: add new features as a section + toggle (see the header comment).")
 
         local w = playerTab:Section("World")
@@ -2398,6 +2537,9 @@ local menuOk, menuErr = pcall(function()
         ut:Toggle({ text = "Anti-AFK", path = "Utility.AntiAFK" })
         ut:Toggle({ text = "FPS boost (effects + particles)", path = "Utility.FpsBoost", onChanged = setFpsBoost })
         ut:Label("FPS boost turns post effects and particle emitters off; all of it is restored when disabled.")
+        ut:Slider({ text = "Camera FOV (0 = game default)", path = "Utility.CameraFOV", min = 0, max = 120, step = 5 })
+        ut:Button({ text = "Rejoin this server", callback = rejoinServer })
+        ut:Button({ text = "Server hop (different server)", callback = serverHop })
     end
 
     local settingsTab = window:Tab("Settings")
@@ -2495,6 +2637,21 @@ local function ensureAimVisuals()
         TextStrokeTransparency = 0.35,
         TextStrokeColor3 = Color3.new(0, 0, 0),
         Text = "",
+        Visible = false,
+    }, parent)
+
+    -- visible while noclip is active, so it cannot be forgotten
+    State.noclipLabel = new("TextLabel", {
+        Name = "NoclipIndicator",
+        Size = UDim2.fromOffset(140, 18),
+        Position = UDim2.new(0.5, -70, 1, -48),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Theme.danger,
+        TextStrokeTransparency = 0.3,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        Text = "NOCLIP ACTIVE",
         Visible = false,
     }, parent)
 end
@@ -2611,6 +2768,18 @@ keepConnection(RunService.RenderStepped:Connect(function()
             updateDebugTab()
             updatePlayerList()
             updateStatsLabels()
+
+            -- noclip safety: indicator while active and an automatic off in
+            -- toggle mode, so it cannot stay on unnoticed
+            if State.noclipLabel then
+                State.noclipLabel.Visible = Config.Player.Noclip
+            end
+            if Config.Player.Noclip and not Config.Player.NoclipHold and State.noclipSince
+                and (os.clock() - State.noclipSince) > Config.Player.NoclipMaxSeconds then
+                setNoclip(false)
+                UI:RefreshAll()
+                toast("Noclip switched off automatically (time limit)", Theme.danger)
+            end
         end)
     end
 
@@ -2686,10 +2855,12 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
         toast("ESP " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
 
     elseif key == Config.Keybinds.Noclip then
-        local value = not Config.Player.Noclip
-        setPath("Player.Noclip", value)
+        if Config.Player.NoclipHold then
+            pcall(setNoclip, true)
+        else
+            pcall(setNoclip, not Config.Player.Noclip)
+        end
         UI:RefreshAll()
-        pcall(setNoclip, value)
 
     elseif key == Config.Keybinds.Fullbright then
         local value = not Config.Player.Fullbright
@@ -2700,8 +2871,12 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
 end))
 
 keepConnection(UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Config.Keybinds.AimToggle then
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if input.KeyCode == Config.Keybinds.AimToggle then
         State.aimKeyDown = false
+    elseif input.KeyCode == Config.Keybinds.Noclip and Config.Player.NoclipHold then
+        pcall(setNoclip, false)
+        UI:RefreshAll()
     end
 end))
 
@@ -2762,6 +2937,9 @@ do
         if State.hookInstalled and State.bulletHit and restorefunction then
             pcall(restorefunction, State.bulletHit)
         end
+        pcall(function()
+            RunService:UnbindFromRenderStep("ScpAimStep")
+        end)
         if UI.gui then UI.gui:Destroy() end
         if State.visualsGui then State.visualsGui:Destroy() end
         UI.gui = nil

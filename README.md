@@ -49,6 +49,8 @@ To rebind: click the key button on the right of a switch, then press the new key
 
 **Silent Aim**
 - enabled, hold-to-aim, FOV radius, max distance
+- **aim mode**: `Silent (BulletHit)` — SCP:RP only, hooks the game's shot function — or `Camera assist`, which turns your own camera and therefore works in any game (with a smoothness slider)
+- optional auto-fire when the crosshair is on the target (risky, off by default)
 - team check, visible targets only, ignore ForceField, target part (`Head` / `HumanoidRootPart` / `Nearest`)
 - "never target researchers": a role filter (researchers are a role, not always a team, so team name, role attributes and the character's labels are checked). The words to match live in `Config.Aim.RoleIgnoreList` (`researcher`, `forscher`, `research`, `wissenschaftler`) — the menu shows the current list, add words in the file if the game reports something else. The Debug tab shows per player what was detected (`ignored=true/false role="..."`).
 - FOV circle + colour, target info (name / HP / distance) at the crosshair
@@ -61,7 +63,9 @@ To rebind: click the key button on the right of a switch, then press the new key
 
 **Player**
 - noclip and fullbright, both with keybinds
+- noclip safety: hold the key (default) so it stops on release, an on-screen indicator while active, an automatic off in toggle mode and it is never switched on by a config or preset
 - anti-AFK (keeps you in the server), FPS boost (post effects and particle emitters off, fully restored when disabled)
+- camera FOV slider, rejoin this server, server hop
 
 **Settings**
 - menu visible, UI scale
