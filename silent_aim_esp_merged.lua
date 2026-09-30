@@ -106,7 +106,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.2 (2026-09-30)"
+local BUILD = "v3.3 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -782,7 +782,12 @@ local Config = {
         Enabled = true,
         GroupId = 5479038,
         MinRank = 248,
+        -- the group check is exact, the label scan is a guess: it stays off
+        -- until you turn it on, and it only matches whole words
+        UseLabelScan = false,
         Keywords = { "moderator", "admin", "staff", "owner", "developer" },
+        KnownNames = {},
+        IgnoreNames = {},
         Notify = true,
         Panic = false,
         LeaveOnStaff = false,
@@ -1950,27 +1955,54 @@ end
 --=====================================================================
 local StaffState = { present = false, names = {}, result = {} }
 
-local function staffByKeywords(player: Player): boolean
+-- Whole-word match only: with a plain substring search "admin" also matched
+-- "Administration" and flagged normal players. Off by default for that reason.
+local function labelKeyword(player: Player): string?
+    if not Config.Staff.UseLabelScan then return nil end
     local char = player.Character
-    if not char then return false end
+    if not char then return nil end
     for _, text in ipairs(characterLabels(player, char)) do
         local lower = string.lower(text)
         for _, word in ipairs(Config.Staff.Keywords) do
-            if type(word) == "string" and #word > 0 and string.find(lower, word, 1, true) then
-                return true
+            if type(word) == "string" and #word > 0 then
+                local plain = string.lower(word)
+                local escaped = string.gsub(plain, "(%W)", "%%%1")
+                if string.find(lower, "%f[%a]" .. escaped .. "%f[%A]") then
+                    return word .. " in \"" .. text .. "\""
+                end
             end
         end
     end
-    return false
+    return nil
 end
 
 -- Full check (may yield, so it only runs from the staff coroutine below).
-local function evaluateStaff(player: Player): boolean
-    if staffByKeywords(player) then return true end
+-- Returns whether the player is staff and why, so a false positive can be
+-- diagnosed from the toast instead of guessed at.
+local function evaluateStaff(player: Player): (boolean, string?)
+    for _, name in ipairs(Config.Staff.IgnoreNames) do
+        if type(name) == "string" and name == player.Name then
+            return false, "in IgnoreNames"
+        end
+    end
+    for _, name in ipairs(Config.Staff.KnownNames) do
+        if type(name) == "string" and name == player.Name then
+            return true, "in KnownNames"
+        end
+    end
+
+    local keyword = labelKeyword(player)
+    if keyword then
+        return true, "label " .. keyword
+    end
+
     local ok, rank = pcall(function()
         return player:GetRankInGroup(Config.Staff.GroupId)
     end)
-    return ok and type(rank) == "number" and rank >= Config.Staff.MinRank
+    if ok and type(rank) == "number" and rank >= Config.Staff.MinRank then
+        return true, "group rank " .. tostring(rank)
+    end
+    return false, nil
 end
 
 -- Cheap, render-safe read: the cached verdict, otherwise only the label check.
@@ -1978,7 +2010,7 @@ isStaffMember = function(player: Player): boolean
     if not Config.Staff.Enabled then return false end
     local cached = StaffState.result[player]
     if cached ~= nil then return cached end
-    return staffByKeywords(player)
+    return labelKeyword(player) ~= nil
 end
 
 local function refreshStaff()
@@ -1989,13 +2021,14 @@ local function refreshStaff()
         return
     end
 
-    local names = {}
+    local names, reasons = {}, {}
     for _, p in next, Players:GetPlayers() do
         if p ~= plr then
-            local staff = evaluateStaff(p)
+            local staff, reason = evaluateStaff(p)
             StaffState.result[p] = staff
             if staff then
                 table.insert(names, p.Name)
+                reasons[p.Name] = reason
             end
         end
     end
@@ -2006,7 +2039,11 @@ local function refreshStaff()
 
     if StaffState.present and not wasPresent then
         if Config.Staff.Notify then
-            toast("STAFF in server: " .. table.concat(names, ", "), Theme.danger)
+            local parts = {}
+            for _, n in ipairs(names) do
+                parts[#parts + 1] = n .. " (" .. tostring(reasons[n] or "?") .. ")"
+            end
+            toast("STAFF in server: " .. table.concat(parts, ", "), Theme.danger)
         end
         if Config.Staff.LeaveOnStaff then
             toast("Anti-moderator: unloading and leaving the server", Theme.danger)
@@ -2930,8 +2967,10 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Panic mode: switch aim/ESP/noclip off while staff is present", path = "Staff.Panic" })
         s:Toggle({ text = "Anti-moderator: unload and leave when staff joins", path = "Staff.LeaveOnStaff" })
         s:Slider({ text = "Minimum staff rank", path = "Staff.MinRank", min = 0, max = 255, step = 1 })
+        s:Toggle({ text = "Also scan role labels for staff words (guesswork)", path = "Staff.UseLabelScan" })
         s:Label("Group: SCP | Roleplay Community (" .. tostring(Config.Staff.GroupId) .. "). Staff ranks there start at 248 (Trial Moderator); Game/Senior/Head Moderator are 249-251, Developer to Administrator 252-255. Normal members are rank 1, so they are never flagged.")
-        s:Label("Extra keywords checked in the role labels: " .. table.concat(Config.Staff.Keywords, ", "))
+        s:Label("Only whole words count in the label scan - \"Administration\" no longer matches \"admin\". The message says why someone was flagged, so a wrong hit is visible. Config.Staff.KnownNames counts as staff, Config.Staff.IgnoreNames never does.")
+        s:Label("Keywords for the label scan: " .. table.concat(Config.Staff.Keywords, ", "))
         s:Label("Detected staff is marked [STAFF] in red in the ESP and in the player list, so you can see who is watching.")
     end
 
