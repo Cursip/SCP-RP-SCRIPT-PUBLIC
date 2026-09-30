@@ -95,7 +95,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.8 (2026-09-30)"
+local BUILD = "v2.9 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -666,8 +666,10 @@ local function keepConnection(conn)
     return conn
 end
 
--- forward declaration: filled in section [10d], used by the ESP and the list
-local isStaffMember
+-- forward declarations: filled in later sections, referenced by earlier ones
+local isStaffMember      -- section [10d]
+local setRemoveFog       -- section [10e]
+local flyStep            -- section [10e], called from the bound render step
 
 --=====================================================================
 -- [7] CONFIG
@@ -724,12 +726,27 @@ local Config = {
         DistanceSize = 12,
         HealthBar = true,
         HealthBarWidth = 3,
+        ShowHealth = true,
+        ShowWeapon = false,
     },
     Player = {
         Noclip = false,
         NoclipHold = true,
         NoclipMaxSeconds = 15,
         Fullbright = false,
+    },
+    Movement = {
+        AntiRagdoll = false,
+        InfiniteJump = false,
+        Bunnyhop = false,
+        JumpPower = 0,
+        WalkSpeed = 0,
+        Fly = false,
+        FlySpeed = 60,
+    },
+    Misc = {
+        RemoveFog = false,
+        Watermark = true,
     },
     Utility = {
         AntiAFK = false,
@@ -755,6 +772,7 @@ local Config = {
         Keywords = { "moderator", "admin", "staff", "owner", "developer" },
         Notify = true,
         Panic = false,
+        LeaveOnStaff = false,
     },
     Keybinds = {
         MenuToggle = Enum.KeyCode.K,
@@ -1374,9 +1392,20 @@ local function updateESP()
                     objects.name.TextColor3 = staff and Theme.danger or cfg.NameColor
                     objects.name.TextSize = cfg.NameSize
 
+                    local hpText = ""
+                    if cfg.ShowHealth and hum and hum.MaxHealth > 0 then
+                        hpText = ("  |  %d HP"):format(math.floor(hum.Health))
+                    end
+                    local weaponText = ""
+                    if cfg.ShowWeapon then
+                        local tool = char:FindFirstChildOfClass("Tool")
+                        if tool then
+                            weaponText = "  |  " .. tool.Name
+                        end
+                    end
                     objects.dist.Visible = cfg.Distance
                     objects.dist.Position = UDim2.fromOffset(math.floor(minX + w / 2 - 100), math.floor(maxY + 2))
-                    objects.dist.Text = ("%d studs"):format(math.floor(dist))
+                    objects.dist.Text = ("%d studs"):format(math.floor(dist)) .. hpText .. weaponText
                     objects.dist.TextColor3 = cfg.DistanceColor
                     objects.dist.TextSize = cfg.DistanceSize
 
@@ -1765,6 +1794,11 @@ applyAllFeatures = function(quiet: boolean?)
         syncAimGlobals()
         setFullbright(Config.Player.Fullbright)
         setFpsBoost(Config.Utility.FpsBoost)
+        if Config.Misc.RemoveFog then
+            setRemoveFog(true)
+        else
+            setRemoveFog(false)
+        end
         if Config.Aim.Enabled and Config.Aim.Mode == "Silent (BulletHit)" and not State.hookInstalled then
             installHook()
         end
@@ -1837,6 +1871,7 @@ pcall(function()
     RunService:BindToRenderStep("ScpAimStep", Enum.RenderPriority.Camera.Value + 1, function(dt)
         cameraAssistStep(dt)
         autoFireStep()
+        if flyStep then flyStep() end
     end)
 end)
 
@@ -1947,8 +1982,18 @@ local function refreshStaff()
     StaffState.present = #names > 0
     StaffState.names = names
 
-    if StaffState.present and not wasPresent and Config.Staff.Notify then
-        toast("STAFF in server: " .. table.concat(names, ", "), Theme.danger)
+    if StaffState.present and not wasPresent then
+        if Config.Staff.Notify then
+            toast("STAFF in server: " .. table.concat(names, ", "), Theme.danger)
+        end
+        if Config.Staff.LeaveOnStaff then
+            toast("Anti-moderator: unloading and leaving the server", Theme.danger)
+            if _G.__scpUnload then _G.__scpUnload() end
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId)
+            end)
+            return
+        end
     end
 
     -- Panic mode: switch the risky features off while staff is around
@@ -2006,6 +2051,111 @@ local function updateHitbox()
             end
         end
     end
+end
+
+--=====================================================================
+-- [10e] MOVEMENT (off by default, these are the most checked features)
+--=====================================================================
+local function applyMovement()
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    if Config.Movement.WalkSpeed > 0 then
+        hum.WalkSpeed = Config.Movement.WalkSpeed
+    end
+    if Config.Movement.JumpPower > 0 then
+        hum.UseJumpPower = true
+        hum.JumpPower = Config.Movement.JumpPower
+    end
+end
+
+flyStep = function()
+    if not Config.Movement.Fly then return end
+    local char = plr.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local cam = currentCam()
+    local move = Vector3.zero
+    if UIS:IsKeyDown(Enum.KeyCode.W) then move += cam.CFrame.LookVector end
+    if UIS:IsKeyDown(Enum.KeyCode.S) then move -= cam.CFrame.LookVector end
+    if UIS:IsKeyDown(Enum.KeyCode.D) then move += cam.CFrame.RightVector end
+    if UIS:IsKeyDown(Enum.KeyCode.A) then move -= cam.CFrame.RightVector end
+    if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0, 1, 0) end
+    if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then move -= Vector3.new(0, 1, 0) end
+
+    if move.Magnitude > 0 then
+        move = move.Unit
+    end
+    hrp.Velocity = move * Config.Movement.FlySpeed
+end
+
+-- per character, because anti-ragdoll and bunnyhop have to follow respawns
+local function bindCharacter(char: Model)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    keepConnection(hum.StateChanged:Connect(function(_, newState)
+        if newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown then
+            if Config.Movement.AntiRagdoll then
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            end
+        elseif newState == Enum.HumanoidStateType.Landed and Config.Movement.Bunnyhop then
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+        end
+    end))
+end
+
+-- infinite jump: answer every jump request, also in mid air
+keepConnection(UIS.JumpRequest:Connect(function()
+    if not Config.Movement.InfiniteJump then return end
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    end
+end))
+
+local Fog = { saved = nil }
+
+setRemoveFog = function(on: boolean)
+    if on then
+        if not Fog.saved then
+            Fog.saved = { fogEnd = Lighting.FogEnd, fogStart = Lighting.FogStart, atmosphere = {} }
+            for _, inst in ipairs(Lighting:GetChildren()) do
+                if inst:IsA("Atmosphere") then
+                    Fog.saved.atmosphere[inst] = { density = inst.Density, haze = inst.Haze }
+                end
+            end
+        end
+        Lighting.FogEnd = 100000
+        Lighting.FogStart = 100000
+        for inst in pairs(Fog.saved.atmosphere) do
+            if inst.Parent then
+                inst.Density = 0
+                inst.Haze = 0
+            end
+        end
+        toast("Fog removed", Theme.success)
+    elseif Fog.saved then
+        Lighting.FogEnd = Fog.saved.fogEnd
+        Lighting.FogStart = Fog.saved.fogStart
+        for inst, values in pairs(Fog.saved.atmosphere) do
+            if inst.Parent then
+                inst.Density = values.density
+                inst.Haze = values.haze
+            end
+        end
+        Fog.saved = nil
+        toast("Fog restored", Theme.dim)
+    end
+end
+
+if plr.Character then
+    task.spawn(function()
+        if plr.Character:WaitForChild("Humanoid", 5) then
+            bindCharacter(plr.Character)
+        end
+    end)
 end
 
 --=====================================================================
@@ -2654,6 +2804,8 @@ local menuOk, menuErr = pcall(function()
         b:Slider({ text = "Distance size", path = "ESP.DistanceSize", min = 8, max = 22, step = 1 })
         b:Toggle({ text = "Healthbar", path = "ESP.HealthBar" })
         b:Slider({ text = "Healthbar width", path = "ESP.HealthBarWidth", min = 1, max = 8, step = 1, suffix = " px" })
+        b:Toggle({ text = "Show HP number", path = "ESP.ShowHealth" })
+        b:Toggle({ text = "Show weapon name", path = "ESP.ShowWeapon" })
 
         local plist = espTab:Section("Player list")
         plist:Toggle({ text = "Player list window", path = "List.Enabled" })
@@ -2686,8 +2838,19 @@ local menuOk, menuErr = pcall(function()
         ut:Toggle({ text = "FPS boost (effects + particles)", path = "Utility.FpsBoost", onChanged = setFpsBoost })
         ut:Label("FPS boost turns post effects and particle emitters off; all of it is restored when disabled.")
         ut:Slider({ text = "Camera FOV (0 = game default)", path = "Utility.CameraFOV", min = 0, max = 120, step = 5 })
+        ut:Toggle({ text = "Remove fog and atmosphere", path = "Misc.RemoveFog", onChanged = setRemoveFog })
         ut:Button({ text = "Rejoin this server", callback = rejoinServer })
         ut:Button({ text = "Server hop (different server)", callback = serverHop })
+
+        local mv = playerTab:Section("Movement (risky)")
+        mv:Toggle({ text = "Anti-ragdoll", path = "Movement.AntiRagdoll" })
+        mv:Toggle({ text = "Infinite jump", path = "Movement.InfiniteJump" })
+        mv:Toggle({ text = "Bunnyhop (auto jump on landing)", path = "Movement.Bunnyhop" })
+        mv:Slider({ text = "Jump height (0 = game default)", path = "Movement.JumpPower", min = 0, max = 300, step = 5 })
+        mv:Slider({ text = "Walkspeed (0 = game default)", path = "Movement.WalkSpeed", min = 0, max = 200, step = 5 })
+        mv:Toggle({ text = "Fly (WASD, Space up, Ctrl down)", path = "Movement.Fly" })
+        mv:Slider({ text = "Fly speed", path = "Movement.FlySpeed", min = 10, max = 300, step = 10 })
+        mv:Label("These are the features this game checks most (walk speed, flight). Everything here is off by default.")
     end
 
     local safetyTab = window:Tab("Safety")
@@ -2696,6 +2859,7 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Staff detector", path = "Staff.Enabled" })
         s:Toggle({ text = "Notify when staff is in the server", path = "Staff.Notify" })
         s:Toggle({ text = "Panic mode: switch aim/ESP/noclip off while staff is present", path = "Staff.Panic" })
+        s:Toggle({ text = "Anti-moderator: unload and leave when staff joins", path = "Staff.LeaveOnStaff" })
         s:Slider({ text = "Minimum staff rank", path = "Staff.MinRank", min = 0, max = 255, step = 1 })
         s:Label("Group id " .. tostring(Config.Staff.GroupId) .. " - change Config.Staff.GroupId if your game uses another group.")
         s:Label("Extra keywords checked in the role labels: " .. table.concat(Config.Staff.Keywords, ", "))
@@ -2710,6 +2874,7 @@ local menuOk, menuErr = pcall(function()
         end })
         m:Slider({ text = "UI scale", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
             onChanged = function(value) window:SetScale(value) end })
+        m:Toggle({ text = "Watermark HUD", path = "Misc.Watermark" })
 
         local pr = settingsTab:Section("Presets")
         pr:Dropdown({ text = "Slot", path = "Profile.Slot", options = { "Slot 1", "Slot 2", "Slot 3" } })
@@ -2812,6 +2977,20 @@ local function ensureAimVisuals()
         TextStrokeTransparency = 0.3,
         TextStrokeColor3 = Color3.new(0, 0, 0),
         Text = "NOCLIP ACTIVE",
+        Visible = false,
+    }, parent)
+
+    State.watermark = new("TextLabel", {
+        Name = "Watermark",
+        Size = UDim2.fromOffset(360, 16),
+        Position = UDim2.fromOffset(8, 4),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = Theme.dim,
+        TextStrokeTransparency = 0.4,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        Text = "",
         Visible = false,
     }, parent)
 end
@@ -2929,6 +3108,14 @@ keepConnection(RunService.RenderStepped:Connect(function()
             updatePlayerList()
             updateStatsLabels()
             updateHitbox()
+            applyMovement()
+
+            if State.watermark then
+                State.watermark.Visible = Config.Misc.Watermark
+                if Config.Misc.Watermark then
+                    State.watermark.Text = ("%s  |  %d fps  |  %d players  |  %s"):format(BUILD, Stats.fps, #Players:GetPlayers(), executor)
+                end
+            end
 
             -- noclip safety: indicator while active and an automatic off in
             -- toggle mode, so it cannot stay on unnoticed
@@ -3045,8 +3232,9 @@ keepConnection(Players.PlayerRemoving:Connect(function(p)
     destroyESPObjects(p)
 end))
 
-keepConnection(plr.CharacterAdded:Connect(function()
+keepConnection(plr.CharacterAdded:Connect(function(char)
     Noclip.saved = nil
+    pcall(bindCharacter, char)
     if Config.Player.Noclip then
         task.wait(1)
         pcall(noclipApply)
@@ -3093,6 +3281,7 @@ do
         clearESP()
         Config.Aim.Hitbox = false
         pcall(updateHitbox)
+        pcall(setRemoveFog, false)
         pcall(setNoclip, false)
         pcall(setFullbright, false)
         pcall(setFpsBoost, false)

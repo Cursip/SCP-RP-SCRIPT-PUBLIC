@@ -67,8 +67,9 @@ To rebind: click the key button on the right of a switch, then press the new key
 **Player**
 - noclip and fullbright, both with keybinds
 - noclip safety: hold the key (default) so it stops on release, an on-screen indicator while active, an automatic off in toggle mode and it is never switched on by a config or preset
+- movement (own section, all off by default): anti-ragdoll, infinite jump, bunnyhop, jump height, walkspeed, fly with fly speed
 - anti-AFK (keeps you in the server), FPS boost (post effects and particle emitters off, fully restored when disabled)
-- camera FOV slider, rejoin this server, server hop
+- camera FOV slider, rejoin this server, server hop, remove fog and atmosphere
 
 **Safety** (own tab)
 - staff detector: checks a configurable group id and minimum rank (`GetRankInGroup`, cached for 10 s) and falls back to keywords in the role labels
