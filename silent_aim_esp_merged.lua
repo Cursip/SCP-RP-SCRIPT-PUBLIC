@@ -92,6 +92,10 @@ local DEBUG_AIM = true
 
 local CONFIG_FILE = "scp_aim_esp_config.json"
 
+-- Shown in the console, the title bar and the status line. If this does not
+-- change after an update, your executor served a cached copy of the file.
+local BUILD = "v2.1 (2026-09-30)"
+
 --=====================================================================
 -- [3] NOTIFICATIONS
 --=====================================================================
@@ -1351,8 +1355,8 @@ end
 
 local window = UI:Window({
     title = "SCP:RP",
-    subtitle = executor .. "  |  " .. tostring(#Players:GetPlayers()) .. " players",
-    version = "v2.0",
+    subtitle = BUILD .. "  |  " .. executor .. "  |  " .. tostring(#Players:GetPlayers()) .. " players",
+    version = BUILD,
     size = UDim2.fromOffset(680, 450),
     position = UDim2.fromOffset(70, 110),
 })
@@ -2181,7 +2185,7 @@ keepConnection(RunService.RenderStepped:Connect(function()
     frameCounter += 1
     if frameCounter % 20 == 0 then
         pcall(function()
-            window:SetStatus(("%s  |  %d players  |  %.0fs"):format(executor, #Players:GetPlayers(), os.clock() - startedAt))
+            window:SetStatus(("%s  |  %s  |  %d players  |  %.0fs"):format(BUILD, executor, #Players:GetPlayers(), os.clock() - startedAt))
             updateDebugTab()
         end)
     end
@@ -2323,6 +2327,6 @@ do
         AIM_DEBUG.hook == "installed on Controller.BulletHit" and Theme.success or Theme.danger)
     toast("Keys: K menu, RightShift aim, V ESP, N noclip, B fullbright", Theme.accent)
 
-    print(("[menu] v2.0 loaded | executor=%s | aim-build=%s | hook=%s")
-        :format(executor, AIM_DEBUG.mode, AIM_DEBUG.hook))
+    print(("[menu] %s loaded | executor=%s | aim-build=%s | hook=%s")
+        :format(BUILD, executor, AIM_DEBUG.mode, AIM_DEBUG.hook))
 end
