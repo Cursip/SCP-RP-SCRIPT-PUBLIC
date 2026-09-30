@@ -1,121 +1,121 @@
 # SCP: Roleplay — Silent Aim + Player ESP + Mod Menu
 
-Ein Skript mit eigenem Menü (kein Einzel-Button mehr): Tabs, Toggle, Slider, Dropdowns,
-Farb- und Keybind-Picker, Config-Speicherung.
+One script with its own mod menu (no more lone toggle button): tabs, switches, sliders,
+dropdowns, colour pickers and keybind fields, plus config save/load.
 
-| Abschnitt | Inhalt |
+| Section | Contents |
 |---|---|
-| `[2]` | Flags (Remote-Build, Fremd-UI, Team-Aliase, Debug) |
-| `[3]` | Toasts + Konsolenausgabe |
-| `[4]` | eigene UI-Library (Fenster, Tabs, Elemente) |
-| `[7]` | Alle Optionen als Defaults + Speichern/Laden (JSON) |
-| `[8]` | Silent Aim: Zielsuche + **`BulletHit`-Hook** |
-| `[9]` | ESP: Highlight (Chams) + Box + Name + Distanz + Healthbar |
-| `[10]` | Extra-Features: Noclip, Fullbright — Vorlage für neue Features |
-| `[11]` | Menü-Aufbau (hier bindest du Optionen) |
-| `[12]` | Render-/Input-Loops |
-| `[13]` | Start + Unload |
+| `[2]` | Flags (remote build, author UI, team aliases, debug) |
+| `[3]` | Toasts + console output |
+| `[4]` | Custom UI library (window, tabs, elements) |
+| `[7]` | Every option as a default + save/load (JSON) |
+| `[8]` | Silent aim: target finder + **`BulletHit` hook** |
+| `[9]` | ESP: highlight (chams) + box + name + distance + healthbar |
+| `[10]` | Extra features: noclip, fullbright — template for new features |
+| `[11]` | Menu build — this is where you bind options |
+| `[12]` | Render and input loops |
+| `[13]` | Start + unload |
 
-## Benutzen
+## Usage
 
-Im Executor ausführen (lädt immer die aktuelle Version aus diesem Repo):
+Run this in your executor (always pulls the latest version from this repo):
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-PUBLIC/main/loader.lua"))()
 ```
 
-Oder direkt das Skript:
+Or load the script directly:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-PUBLIC/main/silent_aim_esp_merged.lua"))()
 ```
 
-## Tasten (alle im Menü änderbar)
+## Keys (all rebindable in the menu)
 
-| Taste | Wirkung |
+| Key | Action |
 |---|---|
-| `K` | Menü ein-/ausblenden |
-| `RightShift` | Silent Aim an/aus (bzw. halten, wenn „Nur solange Taste gehalten" aktiv ist) |
-| `V` | ESP an/aus |
-| `N` | Noclip |
-| `B` | Fullbright |
+| `K` | show/hide the menu |
+| `RightShift` | toggle silent aim (or hold it, if "Only while key is held" is on) |
+| `V` | toggle ESP |
+| `N` | noclip |
+| `B` | fullbright |
 
-Keybind ändern: im Menü auf den Tasten-Button rechts am Toggle klicken und die neue Taste drücken.
+To rebind: click the key button on the right of a switch, then press the new key.
 
-## Optionen
+## Options
 
 **Silent Aim**
-- aktiv, „nur solange Taste gehalten", FOV-Radius, max. Distanz
-- Team-Check, nur sichtbare Ziele, ForceField ignorieren, Ziel-Part (`Head` / `HumanoidRootPart` / `Nearest`)
-- FOV-Kreis + Farbe, Tracer + Farbe + Dicke, Ziel-Info (Name/HP/Distanz) am Fadenkreuz
+- enabled, hold-to-aim, FOV radius, max distance
+- team check, visible targets only, ignore ForceField, target part (`Head` / `HumanoidRootPart` / `Nearest`)
+- FOV circle + colour, tracers + colour + thickness, target info (name / HP / distance) at the crosshair
 
 **ESP**
-- aktiv, Team-Check, nur sichtbare Spieler, max. Distanz
-- Chams/Highlight mit Farbmodus (`Static` / `Team` / `Health` / `Distance`), Füll- und Umrissfarbe, Transparenzen, „immer durch Wände sichtbar"
-- Box (Dicke/Transparenz), Name (Farbe/Größe), Distanz (Farbe/Größe), Healthbar (Breite)
+- enabled, team check, visible players only, max distance
+- chams/highlight with colour mode (`Static` / `Team` / `Health` / `Distance`), fill and outline colour, transparencies, "always visible through walls"
+- box (thickness/transparency), name (colour/size), distance (colour/size), healthbar (width)
 
 **Player**
-- Noclip (mit Keybind), Fullbright (mit Keybind)
+- noclip and fullbright, both with keybinds
 
-**Einstellungen**
-- Menü sichtbar, UI-Größe
-- Config speichern / laden / löschen
-- Menü neu positionieren, Unload (entfernt GUI, Hooks und stellt Noclip/Fullbright zurück)
+**Settings**
+- menu visible, UI scale
+- save / load / delete config
+- re-centre menu, unload (removes the GUI, restores the hook, reverts noclip/fullbright)
 
-## Flags (Abschnitt `[2]`)
+## Flags (section `[2]`)
 
-| Flag | Default | Bedeutung |
+| Flag | Default | Meaning |
 |---|---|---|
-| `PREFER_REMOTE_BUILD` | `false` | `true` lädt `SCP_Roleplay/main.luau` frisch vom Author-Server statt der eingebauten Kopie |
-| `USE_AUTHOR_AIM_UI` | `false` | `true` lädt zusätzlich die Fremd-UI des Authors (eigener FOV-Kreis/Tracer) |
-| `FETCH_TEAM_ALIASES` | `false` | `true` lädt zusätzlich `Teams.luau` (Alias-Tabelle des Authors) |
-| `DEBUG_AIM` | `true` | Debug-Tab mit Hook-Status, `getTarget`-Statistik und Team-Ansicht |
+| `PREFER_REMOTE_BUILD` | `false` | `true` downloads `SCP_Roleplay/main.luau` fresh from the author's server instead of the inlined copy |
+| `USE_AUTHOR_AIM_UI` | `false` | `true` also loads the author's own UI (its own FOV circle/tracers) |
+| `FETCH_TEAM_ALIASES` | `false` | `true` also loads `Teams.luau` (the author's team alias table) |
+| `DEBUG_AIM` | `true` | Debug tab with hook state, `getTarget` stats and the per-player team view |
 
-## Neues Feature hinzufügen (z. B. Noclip)
+## Adding a new feature (e.g. noclip)
 
-1. Default ergänzen (Abschnitt `[7]`):
+1. Add a default (section `[7]`):
    ```lua
    Player = {
        Noclip = false,
-       MeinFeature = false,   -- neu
+       MyFeature = false,   -- new
    },
    ```
-2. Funktion schreiben (Abschnitt `[10]`):
+2. Write the setter (section `[10]`):
    ```lua
-   local function setMeinFeature(on)
-       -- an/aus
+   local function setMyFeature(on)
+       -- enable/disable
    end
    ```
-3. Toggle binden (Abschnitt `[11]`):
+3. Bind a toggle (section `[11]`):
    ```lua
-   local s = playerTab:Section("Mein Bereich")
+   local s = playerTab:Section("My section")
    s:Toggle{
-       text = "Mein Feature", path = "Player.MeinFeature",
-       keybind = "MeinFeature",              -- optional
-       onChanged = function(v) setMeinFeature(v) end,
+       text = "My feature", path = "Player.MyFeature",
+       keybind = "MyFeature",                 -- optional, also add it to Config.Keybinds
+       onChanged = function(v) setMyFeature(v) end,
    }
    ```
-   Für Zahlen/Farben/Auswahlen: `s:Slider{...}`, `s:Color{...}`, `s:Dropdown{...}`.
-   Der Keybind muss zusätzlich in `Config.Keybinds` stehen.
+   For numbers, colours and choices use `s:Slider{...}`, `s:Color{...}` and `s:Dropdown{...}`.
 
-Speichern/Laden, Keybind-Anzeige und Haken-Optik kommen automatisch mit.
+Saving/loading, the keybind display and the switch styling come for free.
 
-## Warum der Hook der entscheidende Teil ist
+## Why the hook is the part that matters
 
-`UIs/silent_aim.luau` malt nur FOV-Kreis und Tracer. Getroffen wird ausschließlich über den
-`hookfunction` auf `getsenv(Controller).BulletHit`, der die Trefferdaten
-(`{Instance, Position, Normal, Material}`) gegen das Ziel tauscht. Fehlt dieser Block, sieht alles
-funktionierend aus (Tracer sind da), aber die Kugeln fliegen weiter dorthin, wo du zielst.
-Der Debug-Tab zeigt `Hook: installiert auf Controller.BulletHit`, wenn es passt.
+`UIs/silent_aim.luau` only draws the FOV circle and tracers. Hits happen exclusively through the
+`hookfunction` on `getsenv(Controller).BulletHit`, which swaps the hit data
+(`{Instance, Position, Normal, Material}`) for the target. Without that block everything looks like
+it works (tracers appear) while the bullets keep flying exactly where you aim.
+The Debug tab shows `Hook: installed on Controller.BulletHit` when it is set up correctly.
 
-## Update-Workflow
+## Update workflow
 
-1. `silent_aim_esp_merged.lua` bearbeiten
+1. edit `silent_aim_esp_merged.lua`
 2. `git commit -am "..." && git push`
-3. im Executor `loader.lua` neu ausführen → neueste Version (raw-CDN braucht ggf. 1–5 Minuten)
+3. run `loader.lua` in the executor again → latest version (the raw CDN may lag 1–5 minutes)
 
-## Herkunft
+## Credits
 
-Der Silent-Aim-Teil stammt aus `sneekysscripts.uk` (`SCP_Roleplay/main.luau`,
-`UIs/silent_aim.luau`, `Teams.luau`); der ESP-Teil ist das separat gelieferte
-„DeepHat Player-Only ESP". Menü, Optionen und Zusatzfeatures sind hier zusammengeführt.
+The silent aim part comes from `sneekysscripts.uk` (`SCP_Roleplay/main.luau`,
+`UIs/silent_aim.luau`, `Teams.luau`); the ESP part is the separately supplied
+"DeepHat Player-Only ESP". This repo merges both and adds the menu, the options and the extra
+features.

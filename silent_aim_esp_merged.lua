@@ -3,33 +3,33 @@
   SCP: Roleplay - Silent Aim + Player ESP + Mod Menu
   =====================================================================
 
-  Aufbau
-    [0] Boot / Executor-Kompatibilitaet
+  Layout
+    [0] Boot / executor compatibility
     [1] Services
     [2] Flags
-    [3] Notifications (Toasts + Konsole)
-    [4] UI-Library (Fenster, Tabs, Toggle, Slider, Dropdown, Farbe)
-    [5] Hilfsfunktionen (Sichtbarkeit, Bounding-Box, Zeichnen)
+    [3] Notifications (toasts + console)
+    [4] UI library (window, tabs, toggle, slider, dropdown, color)
+    [5] Helpers (visibility, bounding box, drawing)
     [6] State
-    [7] Config (Defaults) + Speichern/Laden
-    [8] Silent Aim (Zielsuche + BulletHit-Hook)   <- das, was wirklich trifft
-    [9] ESP (Highlight + Box + Name + Distanz + Healthbar)
-   [10] Extra-Features (Noclip, Fullbright)
-   [11] Menue-Aufbau
-   [12] Render- und Input-Loops
-   [13] Start / Unload
+    [7] Config (defaults) + save/load
+    [8] Silent aim (target finder + BulletHit hook)  <- the part that hits
+    [9] ESP (highlight + box + name + distance + healthbar)
+   [10] Extra features (noclip, fullbright)
+   [11] Menu build
+   [12] Render and input loops
+   [13] Start / unload
 
-  Neues Feature hinzufuegen (Vorlage: Noclip in [10]):
-    1. Default ergaenzen:   Config.Player.MeinFeature = false
-    2. Funktion schreiben:  local function setMeinFeature(on) ... end
-    3. Toggle binden (in [11]):
-         local s = playerTab:Section("Mein Bereich")
+  Adding a new feature (template: noclip in [10]):
+    1. add a default:      Config.Player.MyFeature = false
+    2. write the setter:   local function setMyFeature(on) ... end
+    3. bind a toggle (in [11]):
+         local s = playerTab:Section("My section")
          s:Toggle{
-             text = "Mein Feature", path = "Player.MeinFeature",
-             keybind = "MeinFeature", defaultKey = Enum.KeyCode.X,   -- optional
-             onChanged = function(v) setMeinFeature(v) end,
+             text = "My feature", path = "Player.MyFeature",
+             keybind = "MyFeature", defaultKey = Enum.KeyCode.X,   -- optional
+             onChanged = function(v) setMyFeature(v) end,
          }
-    Speichern/Laden und Keybind laufen automatisch mit.
+    Saving/loading and the keybind come for free.
 =====================================================================]]
 
 --=====================================================================
@@ -43,7 +43,7 @@ local newcclosure = newcclosure or clonefunction
 local executor = identifyexecutor and identifyexecutor() or "Your executor"
 
 --=====================================================================
--- [1] SERVICES / KLEINE HELFER
+-- [1] SERVICES / SMALL HELPERS
 --=====================================================================
 local Players: Players = cloneref(game:GetService("Players"))
 local RunService: RunService = cloneref(game:GetService("RunService"))
@@ -74,20 +74,20 @@ end
 --=====================================================================
 -- [2] FLAGS
 --=====================================================================
--- true  = Author-Build (SCP_Roleplay/main.luau) frisch laden statt der
---         eingebauten Kopie. Nach einem Spielupdate die sicherere Variante.
+-- true  = download the author's current SCP_Roleplay/main.luau instead of
+--         the inlined copy (safer after a game update)
 local PREFER_REMOTE_BUILD = false
 local SILENT_AIM_URL = "https://sneekysscripts.uk/Scripts/SCP_Roleplay/main.luau"
 
--- true  = zusaetzlich die Fremd-UI des Authors (eigener FOV-Kreis/Tracer)
---         laden. Standard false, weil das eigene Menue das selbst zeichnet.
+-- true  = also load the author's own UI (it draws its own FOV circle and
+--         tracers). Default false: this menu renders those itself.
 local USE_AUTHOR_AIM_UI = false
 local SILENT_AIM_UI_URL = "https://sneekysscripts.uk/Scripts/UIs/silent_aim.luau"
 
--- true  = Teams.luau (Alias-Tabelle des Authors) mitladen
+-- true  = also load Teams.luau (the author's team alias table)
 local FETCH_TEAM_ALIASES = false
 
--- Debug-Tab im Menue anzeigen
+-- show the Debug tab in the menu
 local DEBUG_AIM = true
 
 local CONFIG_FILE = "scp_aim_esp_config.json"
@@ -233,9 +233,9 @@ end
 local UI = {
     gui = nil,
     window = nil,
-    binders = nil,      -- wird in [11] gefuellt
-    promptBind = nil,   -- Element, das auf einen Tastendruck wartet
-    refreshers = {},    -- liest Config und aktualisiert die Optik
+    binders = nil,      -- filled in [11]
+    promptBind = nil,   -- element waiting for a key press
+    refreshers = {},    -- reads Config and refreshes the visuals
 }
 
 function UI:RefreshAll()
@@ -270,7 +270,7 @@ function UI:Window(spec)
     corner(win, 10)
     stroke(win, Theme.stroke, 1, 0.25)
 
-    -- ------------------------------------------------------ Titelleiste
+    -- ------------------------------------------------------ title bar
     local bar = new("Frame", {
         Name = "TitleBar",
         Size = UDim2.new(1, 0, 0, 38),
@@ -337,7 +337,7 @@ function UI:Window(spec)
     corner(hideBtn, 6)
     hover(hideBtn, Theme.element, Theme.danger)
 
-    -- ---------------------------------------------------- Sidebar/Inhalt
+    -- ---------------------------------------------------- sidebar/content
     local body = new("Frame", {
         Size = UDim2.new(1, 0, 1, -38),
         Position = UDim2.fromOffset(0, 38),
@@ -371,7 +371,7 @@ function UI:Window(spec)
         collapsed = false,
     }
 
-    -- Ziehen an der Titelleiste
+    -- dragging via the title bar
     local dragging, dragStart, startPos = false, nil, nil
     bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -401,7 +401,7 @@ function UI:Window(spec)
 
     hideBtn.MouseButton1Click:Connect(function()
         screen.Enabled = false
-        toast("Menue versteckt - Taste " .. tostring(Config.Keybinds.MenuToggle.Name) .. " zeigt es wieder", Theme.accent)
+        toast("Menu hidden - press " .. tostring(Config.Keybinds.MenuToggle.Name) .. " to show it again", Theme.accent)
     end)
 
     function window:SetScale(value: number)
@@ -535,12 +535,12 @@ function UI:Section(tab, title: string)
         hover(b, Theme.element, Theme.elementHover)
         b.MouseButton1Click:Connect(function()
             local ok, err = pcall(spec.callback)
-            if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+            if not ok then toast("Error: " .. tostring(err), Theme.danger) end
         end)
         return b
     end
 
-    -- Toggle/Slider/Dropdown/Farbe kommen aus [11] (brauchen Config)
+    -- Toggle/Slider/Dropdown/Color come from [11] (they need Config)
     function section:Toggle(spec) return UI.binders.Toggle(self, spec) end
     function section:Slider(spec) return UI.binders.Slider(self, spec) end
     function section:Dropdown(spec) return UI.binders.Dropdown(self, spec) end
@@ -550,7 +550,7 @@ function UI:Section(tab, title: string)
 end
 
 --=====================================================================
--- [5] HILFSFUNKTIONEN
+-- [5] HELPERS
 --=====================================================================
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -597,7 +597,7 @@ local function healthColor(frac: number): Color3
     return bad:Lerp(mid, frac * 2)
 end
 
--- 2D-Bounding-Box eines Charakters (nil, wenn nicht darstellbar)
+-- 2D bounding box of a character (nil if it cannot be projected)
 local function projectBox(model: Model)
     local cam = currentCam()
     local ok, cf, size = pcall(function()
@@ -789,44 +789,44 @@ end
 
 local function saveConfig()
     if typeof(writefile) ~= "function" then
-        toast("Executor hat keine Datei-API (writefile)", Theme.danger)
+        toast("Executor has no file API (writefile)", Theme.danger)
         return
     end
     local ok, encoded = pcall(function()
         return HttpService:JSONEncode(serialize(Config))
     end)
     if not ok then
-        toast("Speichern fehlgeschlagen: " .. tostring(encoded), Theme.danger)
+        toast("Save failed: " .. tostring(encoded), Theme.danger)
         return
     end
     local wrote = pcall(writefile, CONFIG_FILE, encoded)
     if wrote then
-        toast("Config gespeichert: " .. CONFIG_FILE, Theme.success)
+        toast("Config saved: " .. CONFIG_FILE, Theme.success)
     else
-        toast("Schreiben fehlgeschlagen", Theme.danger)
+        toast("Write failed", Theme.danger)
     end
 end
 
 local function loadConfig(silent: boolean?)
     if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
-        if not silent then toast("Executor hat keine Datei-API (readfile)", Theme.danger) end
+        if not silent then toast("Executor has no file API (readfile)", Theme.danger) end
         return false
     end
     local checked, exists = pcall(isfile, CONFIG_FILE)
     if not checked or not exists then
-        if not silent then toast("Keine Config gefunden", Theme.danger) end
+        if not silent then toast("No config found", Theme.danger) end
         return false
     end
     local ok, content = pcall(readfile, CONFIG_FILE)
     if not ok or type(content) ~= "string" then
-        if not silent then toast("Config nicht lesbar", Theme.danger) end
+        if not silent then toast("Config not readable", Theme.danger) end
         return false
     end
     local decodedOk, decoded = pcall(function()
         return deserialize(HttpService:JSONDecode(content))
     end)
     if not decodedOk or type(decoded) ~= "table" then
-        if not silent then toast("Config ist beschaedigt", Theme.danger) end
+        if not silent then toast("Config is corrupted", Theme.danger) end
         return false
     end
     for group, values in pairs(decoded) do
@@ -837,7 +837,7 @@ local function loadConfig(silent: boolean?)
         end
     end
     UI:RefreshAll()
-    if not silent then toast("Config geladen", Theme.success) end
+    if not silent then toast("Config loaded", Theme.success) end
     return true
 end
 
@@ -845,8 +845,8 @@ end
 -- [8] SILENT AIM
 --=====================================================================
 local AIM_DEBUG = {
-    mode = "noch nicht gestartet",
-    hook = "nicht installiert",
+    mode = "not started yet",
+    hook = "not installed",
     calls = 0,
     hits = 0,
     lastTarget = "-",
@@ -868,7 +868,7 @@ if FETCH_TEAM_ALIASES then
     if ok and type(res) == "table" then
         teamAliases = res
     else
-        warn("[menu] Teams.luau nicht verfuegbar, nutze direkten Team-Vergleich")
+        warn("[menu] Teams.luau unavailable, using a plain team comparison")
     end
 end
 
@@ -903,8 +903,8 @@ local function pickTargetPart(char: Model, origin: Vector3): BasePart?
     return (char:FindFirstChild("Head") or char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")) :: any
 end
 
--- Liefert das Ziel-Part oder nil. forVisual = nur Anzeige (zaehlt nicht in
--- die Statistik und ignoriert "nur solange Taste gehalten").
+-- Returns the target part or nil. forVisual = display only (not counted
+-- in the stats and ignores "only while key is held").
 local function findTarget(origin: Vector3?, forVisual: boolean?)
     local cfg = Config.Aim
     if not cfg.Enabled then return nil end
@@ -924,9 +924,9 @@ local function findTarget(origin: Vector3?, forVisual: boolean?)
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 if not (char and hum) then
-                    dbgReason("kein Char")
+                    dbgReason("no char")
                 elseif hum.Health <= 0 then
-                    dbgReason("tot")
+                    dbgReason("dead")
                 elseif cfg.IgnoreForcefield and char:FindFirstChildOfClass("ForceField") then
                     dbgReason("forcefield")
                 else
@@ -934,9 +934,9 @@ local function findTarget(origin: Vector3?, forVisual: boolean?)
                     local hrp = char:FindFirstChild("HumanoidRootPart") or part
                     local dist3 = hrp and (cam.CFrame.Position - hrp.Position).Magnitude or 0
                     if not part then
-                        dbgReason("kein Part")
+                        dbgReason("no part")
                     elseif cfg.MaxDistance > 0 and dist3 > cfg.MaxDistance then
-                        dbgReason("zu weit")
+                        dbgReason("too far")
                     else
                         local pos, onScreen = cam:WorldToViewportPoint(part.Position)
                         if not onScreen then
@@ -953,15 +953,15 @@ local function findTarget(origin: Vector3?, forVisual: boolean?)
                                 end
                             end
                             if cfg.VisibleOnly and not visible then
-                                dbgReason("blockiert")
+                                dbgReason("blocked")
                             else
                                 if hitPart then part = hitPart end
                                 local px = (Vector2.new(pos.X, pos.Y) - mousePoint()).Magnitude
                                 if px < bestDist then
                                     best, bestPlayer, bestDist = part, player, px
-                                    dbgReason("akzeptiert")
+                                    dbgReason("accepted")
                                 else
-                                    dbgReason("ausserhalb FOV")
+                                    dbgReason("outside FOV")
                                 end
                             end
                         end
@@ -983,27 +983,27 @@ local function syncAimGlobals()
     getgenv().sneeky_fov_size = Config.Aim.FOV
 end
 
--- Hook auf Controller.BulletHit: ersetzt die Trefferdaten durch das Ziel.
--- Ohne diesen Hook malt die UI nur Tracer, getroffen wird nichts.
+-- Hook on Controller.BulletHit: swaps the hit data for the target.
+-- Without this hook the UI only draws tracers and nothing ever gets hit.
 local function installHook(): (boolean, string)
-    AIM_DEBUG.hook = "nicht installiert"
+    AIM_DEBUG.hook = "not installed"
 
     if PREFER_REMOTE_BUILD then
         local ok = pcall(function()
             loadstring(game:HttpGet(SILENT_AIM_URL))()
         end)
         if ok then
-            AIM_DEBUG.mode = "main.luau (Author-Build, remote)"
-            AIM_DEBUG.hook = "vom Author-Build verwaltet"
+            AIM_DEBUG.mode = "main.luau (author build, remote)"
+            AIM_DEBUG.hook = "managed by the author build"
             return true, AIM_DEBUG.hook
         end
-        warn("[menu] " .. SILENT_AIM_URL .. " fehlgeschlagen, nutze eingebauten Code")
+        warn("[menu] " .. SILENT_AIM_URL .. " failed, using the inlined code")
     end
-    AIM_DEBUG.mode = "eingebaut (main.luau-Code + eigenes Menue)"
+    AIM_DEBUG.mode = "inlined (main.luau code + own menu)"
 
     local controller = plr.PlayerScripts:FindFirstChild("Controller")
     if not (hookfunction and getsenv and controller) then
-        AIM_DEBUG.hook = "hookfunction/getsenv/Controller fehlt"
+        AIM_DEBUG.hook = "hookfunction/getsenv/Controller missing"
         return false, AIM_DEBUG.hook
     end
     AIM_DEBUG.controller = true
@@ -1018,7 +1018,7 @@ local function installHook(): (boolean, string)
         task.wait()
     end
     if not bulletHit then
-        AIM_DEBUG.hook = "Controller.BulletHit nicht gefunden"
+        AIM_DEBUG.hook = "Controller.BulletHit not found"
         return false, AIM_DEBUG.hook
     end
     AIM_DEBUG.bulletHit = true
@@ -1049,11 +1049,11 @@ local function installHook(): (boolean, string)
     end)
 
     if not ok or not State.hookInstalled then
-        AIM_DEBUG.hook = "fehlgeschlagen: " .. tostring(err or "hookfunction lieferte nichts")
+        AIM_DEBUG.hook = "failed: " .. tostring(err or "hookfunction returned nothing")
         return false, AIM_DEBUG.hook
     end
 
-    AIM_DEBUG.hook = "installiert auf Controller.BulletHit"
+    AIM_DEBUG.hook = "installed on Controller.BulletHit"
     return true, AIM_DEBUG.hook
 end
 
@@ -1261,7 +1261,7 @@ local function updateESP()
 end
 
 --=====================================================================
--- [10] EXTRA-FEATURES  (Vorlage fuer neue Features)
+-- [10] EXTRA FEATURES  (template for new features)
 --=====================================================================
 local Noclip = { saved = nil }
 
@@ -1280,7 +1280,7 @@ end
 local function setNoclip(on: boolean)
     if on then
         noclipApply()
-        toast("Noclip AN (kann vom Anti-Cheat erkannt werden)", Theme.success)
+        toast("Noclip ON (may be detected by anti-cheat)", Theme.success)
     else
         if Noclip.saved then
             for part in pairs(Noclip.saved) do
@@ -1290,7 +1290,7 @@ local function setNoclip(on: boolean)
             end
         end
         Noclip.saved = nil
-        toast("Noclip AUS", Theme.dim)
+        toast("Noclip OFF", Theme.dim)
     end
 end
 
@@ -1315,7 +1315,7 @@ local function setFullbright(on: boolean)
         Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 100000
-        toast("Fullbright AN", Theme.success)
+        toast("Fullbright ON", Theme.success)
     else
         if Fullbright.saved then
             for key, value in pairs(Fullbright.saved) do
@@ -1323,12 +1323,12 @@ local function setFullbright(on: boolean)
             end
         end
         Fullbright.saved = nil
-        toast("Fullbright AUS", Theme.dim)
+        toast("Fullbright OFF", Theme.dim)
     end
 end
 
 --=====================================================================
--- [11] MENUE-AUFBAU
+-- [11] MENU BUILD
 --=====================================================================
 notifyHolder = new("Frame", {
     Name = "Notifications",
@@ -1338,20 +1338,20 @@ notifyHolder = new("Frame", {
 }, {})
 list(notifyHolder, 6)
 
--- Config zuerst laden und das Aim installieren, BEVOR das Menue gebaut wird:
--- so haengt das Treffen nicht daran, ob der UI-Aufbau fehlerfrei durchlaeuft.
+-- Load the config and install the aim BEFORE the menu is built, so that
+-- hitting does not depend on the UI building without errors.
 pcall(function()
     loadConfig(true)
 end)
 syncAimGlobals()
 if Config.Aim.Enabled and not State.hookInstalled then
     local ok, reason = pcall(installHook)
-    if not ok then AIM_DEBUG.hook = "Fehler: " .. tostring(reason) end
+    if not ok then AIM_DEBUG.hook = "Error: " .. tostring(reason) end
 end
 
 local window = UI:Window({
     title = "SCP:RP",
-    subtitle = executor .. "  |  " .. tostring(#Players:GetPlayers()) .. " Spieler",
+    subtitle = executor .. "  |  " .. tostring(#Players:GetPlayers()) .. " players",
     version = "v2.0",
     size = UDim2.fromOffset(680, 450),
     position = UDim2.fromOffset(70, 110),
@@ -1359,7 +1359,7 @@ local window = UI:Window({
 notifyHolder.Parent = UI.gui
 State.espGui = UI.gui
 
--- ------------------------------------------------------- Element-Binder
+-- ------------------------------------------------------- element binders
 local function bindToggle(section, spec)
     local holder = new("Frame", {
         Size = UDim2.new(1, 0, 0, 32),
@@ -1430,7 +1430,7 @@ local function bindToggle(section, spec)
         draw()
         if fire and spec.onChanged then
             local ok, err = pcall(spec.onChanged, value)
-            if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+            if not ok then toast("Error: " .. tostring(err), Theme.danger) end
         end
     end
 
@@ -1548,7 +1548,7 @@ local function bindSlider(section, spec)
         draw(value)
         if fire and spec.onChanged then
             local ok, err = pcall(spec.onChanged, value)
-            if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+            if not ok then toast("Error: " .. tostring(err), Theme.danger) end
         end
     end
 
@@ -1678,7 +1678,7 @@ local function bindDropdown(section, spec)
                 valueLabel.Text = tostring(option)
                 if spec.onChanged then
                     local ok, err = pcall(spec.onChanged, option)
-                    if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+                    if not ok then toast("Error: " .. tostring(err), Theme.danger) end
                 end
                 closePopup()
             end)
@@ -1784,7 +1784,7 @@ local function bindColor(section, spec)
             preview.BackgroundColor3 = current
             if spec.onChanged then
                 local ok, err = pcall(spec.onChanged, current)
-                if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+                if not ok then toast("Error: " .. tostring(err), Theme.danger) end
             end
         end
 
@@ -1880,14 +1880,14 @@ end
 
 UI.binders = { Toggle = bindToggle, Slider = bindSlider, Dropdown = bindDropdown, Color = bindColor }
 
--- ------------------------------------------------------ Silent-Aim-Tab
+-- ------------------------------------------------------ silent aim tab
 local function onAimEnabledChanged(value)
     syncAimGlobals()
     if value and not State.hookInstalled then
         local ok, reason = pcall(installHook)
         if not ok then
-            AIM_DEBUG.hook = "Fehler: " .. tostring(reason)
-            toast("Hook-Installation fehlgeschlagen: " .. tostring(reason), Theme.danger)
+            AIM_DEBUG.hook = "Error: " .. tostring(reason)
+            toast("Hook installation failed: " .. tostring(reason), Theme.danger)
         else
             toast("Hook: " .. AIM_DEBUG.hook, Theme.success)
         end
@@ -1897,59 +1897,59 @@ end
 local menuOk, menuErr = pcall(function()
     local aimTab = window:Tab("Silent Aim")
     do
-        local s = aimTab:Section("Ziel")
+        local s = aimTab:Section("Targeting")
         s:Toggle({
-            text = "Silent Aim aktiv", path = "Aim.Enabled", keybind = "AimToggle",
+            text = "Silent aim enabled", path = "Aim.Enabled", keybind = "AimToggle",
             onChanged = onAimEnabledChanged,
         })
-        s:Toggle({ text = "Nur solange Taste gehalten", path = "Aim.HoldToAim" })
-        s:Slider({ text = "FOV (Radius)", path = "Aim.FOV", min = 20, max = 1200, step = 10, suffix = " px",
+        s:Toggle({ text = "Only while key is held", path = "Aim.HoldToAim" })
+        s:Slider({ text = "FOV (radius)", path = "Aim.FOV", min = 20, max = 1200, step = 10, suffix = " px",
             onChanged = syncAimGlobals })
-        s:Slider({ text = "Max. Distanz (0 = egal)", path = "Aim.MaxDistance", min = 0, max = 2000, step = 25, suffix = " studs" })
-        s:Toggle({ text = "Team-Check", path = "Aim.TeamCheck" })
-        s:Toggle({ text = "Nur sichtbare Ziele", path = "Aim.VisibleOnly" })
-        s:Toggle({ text = "ForceField ignorieren", path = "Aim.IgnoreForcefield" })
-        s:Dropdown({ text = "Ziel-Part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
+        s:Slider({ text = "Max distance (0 = ignore)", path = "Aim.MaxDistance", min = 0, max = 2000, step = 25, suffix = " studs" })
+        s:Toggle({ text = "Team check", path = "Aim.TeamCheck" })
+        s:Toggle({ text = "Visible targets only", path = "Aim.VisibleOnly" })
+        s:Toggle({ text = "Ignore ForceField", path = "Aim.IgnoreForcefield" })
+        s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
 
-        local v = aimTab:Section("Anzeige")
-        v:Toggle({ text = "FOV-Kreis", path = "Aim.ShowFOV" })
-        v:Color({ text = "FOV-Farbe", path = "Aim.FOVColor" })
+        local v = aimTab:Section("Visuals")
+        v:Toggle({ text = "FOV circle", path = "Aim.ShowFOV" })
+        v:Color({ text = "FOV color", path = "Aim.FOVColor" })
         v:Toggle({ text = "Tracer", path = "Aim.Tracers" })
-        v:Color({ text = "Tracer-Farbe", path = "Aim.TracerColor" })
-        v:Slider({ text = "Tracer-Dicke", path = "Aim.TracerThickness", min = 1, max = 6, step = 1, suffix = " px" })
-        v:Toggle({ text = "Ziel-Info am Fadenkreuz", path = "Aim.TargetInfo" })
-        v:Color({ text = "Info-Farbe", path = "Aim.InfoColor" })
+        v:Color({ text = "Tracer color", path = "Aim.TracerColor" })
+        v:Slider({ text = "Tracer thickness", path = "Aim.TracerThickness", min = 1, max = 6, step = 1, suffix = " px" })
+        v:Toggle({ text = "Target info at the crosshair", path = "Aim.TargetInfo" })
+        v:Color({ text = "Info color", path = "Aim.InfoColor" })
     end
 
     local espTab = window:Tab("ESP")
     do
-        local s = espTab:Section("Allgemein")
-        s:Toggle({ text = "ESP aktiv", path = "ESP.Enabled", keybind = "ESPToggle" })
-        s:Toggle({ text = "Team-Check", path = "ESP.TeamCheck" })
-        s:Toggle({ text = "Nur sichtbare Spieler", path = "ESP.VisibleOnly" })
-        s:Slider({ text = "Max. Distanz (0 = egal)", path = "ESP.MaxDistance", min = 0, max = 3000, step = 50, suffix = " studs" })
+        local s = espTab:Section("General")
+        s:Toggle({ text = "ESP enabled", path = "ESP.Enabled", keybind = "ESPToggle" })
+        s:Toggle({ text = "Team check", path = "ESP.TeamCheck" })
+        s:Toggle({ text = "Visible players only", path = "ESP.VisibleOnly" })
+        s:Slider({ text = "Max distance (0 = ignore)", path = "ESP.MaxDistance", min = 0, max = 3000, step = 50, suffix = " studs" })
 
         local c = espTab:Section("Chams (Highlight)")
         c:Toggle({ text = "Highlight", path = "ESP.Highlight" })
-        c:Dropdown({ text = "Farbe nach", path = "ESP.ColorMode", options = { "Static", "Team", "Health", "Distance" } })
-        c:Color({ text = "Fuellfarbe (Static)", path = "ESP.FillColor" })
-        c:Slider({ text = "Fuell-Transparenz", path = "ESP.FillTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
-        c:Color({ text = "Umriss-Farbe", path = "ESP.OutlineColor" })
-        c:Slider({ text = "Umriss-Transparenz", path = "ESP.OutlineTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
-        c:Toggle({ text = "Immer durch Waende sichtbar", path = "ESP.AlwaysOnTop" })
+        c:Dropdown({ text = "Color by", path = "ESP.ColorMode", options = { "Static", "Team", "Health", "Distance" } })
+        c:Color({ text = "Fill color (static)", path = "ESP.FillColor" })
+        c:Slider({ text = "Fill transparency", path = "ESP.FillTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
+        c:Color({ text = "Outline color", path = "ESP.OutlineColor" })
+        c:Slider({ text = "Outline transparency", path = "ESP.OutlineTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
+        c:Toggle({ text = "Always visible through walls", path = "ESP.AlwaysOnTop" })
 
-        local b = espTab:Section("2D-Elemente")
+        local b = espTab:Section("2D elements")
         b:Toggle({ text = "Box", path = "ESP.Box" })
-        b:Slider({ text = "Box-Dicke", path = "ESP.BoxThickness", min = 1, max = 5, step = 1, suffix = " px" })
-        b:Slider({ text = "Box-Transparenz", path = "ESP.BoxTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
+        b:Slider({ text = "Box thickness", path = "ESP.BoxThickness", min = 1, max = 5, step = 1, suffix = " px" })
+        b:Slider({ text = "Box transparency", path = "ESP.BoxTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
         b:Toggle({ text = "Name", path = "ESP.Name" })
-        b:Color({ text = "Name-Farbe", path = "ESP.NameColor" })
-        b:Slider({ text = "Name-Groesse", path = "ESP.NameSize", min = 8, max = 22, step = 1 })
-        b:Toggle({ text = "Distanz", path = "ESP.Distance" })
-        b:Color({ text = "Distanz-Farbe", path = "ESP.DistanceColor" })
-        b:Slider({ text = "Distanz-Groesse", path = "ESP.DistanceSize", min = 8, max = 22, step = 1 })
+        b:Color({ text = "Name color", path = "ESP.NameColor" })
+        b:Slider({ text = "Name size", path = "ESP.NameSize", min = 8, max = 22, step = 1 })
+        b:Toggle({ text = "Distance", path = "ESP.Distance" })
+        b:Color({ text = "Distance color", path = "ESP.DistanceColor" })
+        b:Slider({ text = "Distance size", path = "ESP.DistanceSize", min = 8, max = 22, step = 1 })
         b:Toggle({ text = "Healthbar", path = "ESP.HealthBar" })
-        b:Slider({ text = "Healthbar-Breite", path = "ESP.HealthBarWidth", min = 1, max = 8, step = 1, suffix = " px" })
+        b:Slider({ text = "Healthbar width", path = "ESP.HealthBarWidth", min = 1, max = 8, step = 1, suffix = " px" })
     end
 
     local playerTab = window:Tab("Player")
@@ -1959,43 +1959,43 @@ local menuOk, menuErr = pcall(function()
             text = "Noclip", path = "Player.Noclip", keybind = "Noclip",
             onChanged = function(value) setNoclip(value) end,
         })
-        s:Label("Vorlage: neue Features als Section + Toggle ergaenzen (siehe Kopf-Kommentar).")
+        s:Label("Template: add new features as a section + toggle (see the header comment).")
 
-        local w = playerTab:Section("Welt")
+        local w = playerTab:Section("World")
         w:Toggle({
             text = "Fullbright", path = "Player.Fullbright", keybind = "Fullbright",
             onChanged = function(value) setFullbright(value) end,
         })
     end
 
-    local settingsTab = window:Tab("Einstellungen")
+    local settingsTab = window:Tab("Settings")
     do
-        local m = settingsTab:Section("Menue")
-        m:Toggle({ text = "Menue sichtbar", path = "Menu.Visible", keybind = "MenuToggle", onChanged = function(value)
+        local m = settingsTab:Section("Menu")
+        m:Toggle({ text = "Menu visible", path = "Menu.Visible", keybind = "MenuToggle", onChanged = function(value)
             UI.gui.Enabled = value
         end })
-        m:Slider({ text = "UI-Groesse", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
+        m:Slider({ text = "UI scale", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
             onChanged = function(value) window:SetScale(value) end })
 
         local c = settingsTab:Section("Config")
-        c:Label("Speichert alle Optionen in " .. CONFIG_FILE .. " (braucht writefile).")
-        c:Button({ text = "Config speichern", callback = saveConfig })
-        c:Button({ text = "Config laden", callback = function() loadConfig(false) end })
-        c:Button({ text = "Config loeschen", color = Theme.danger, callback = function()
+        c:Label("Saves all options to " .. CONFIG_FILE .. " (requires writefile).")
+        c:Button({ text = "Save config", callback = saveConfig })
+        c:Button({ text = "Load config", callback = function() loadConfig(false) end })
+        c:Button({ text = "Delete config", color = Theme.danger, callback = function()
             if typeof(delfile) == "function" then
                 pcall(delfile, CONFIG_FILE)
-                toast("Config geloescht", Theme.danger)
+                toast("Config deleted", Theme.danger)
             else
-                toast("Executor hat kein delfile", Theme.danger)
+                toast("Executor has no delfile", Theme.danger)
             end
         end })
 
-        local u = settingsTab:Section("Skript")
+        local u = settingsTab:Section("Script")
         u:Label("Build: " .. AIM_DEBUG.mode)
-        u:Button({ text = "Menue neu positionieren", callback = function()
+        u:Button({ text = "Re-centre menu", callback = function()
             window.frame.Position = UDim2.fromOffset(70, 110)
         end })
-        u:Button({ text = "Unload (alles entfernen)", color = Theme.danger, callback = function()
+        u:Button({ text = "Unload (remove everything)", color = Theme.danger, callback = function()
             if _G.__scpUnload then _G.__scpUnload() end
         end })
     end
@@ -2016,11 +2016,11 @@ local menuOk, menuErr = pcall(function()
 end)
 
 if not menuOk then
-    warn("[menu] UI-Aufbau fehlgeschlagen: " .. tostring(menuErr))
+    warn("[menu] UI build failed: " .. tostring(menuErr))
 end
 
 --=====================================================================
--- [12] RENDER- UND INPUT-LOOPS
+-- [12] RENDER AND INPUT LOOPS
 --=====================================================================
 local function ensureAimVisuals()
     if State.fovFrame then return end
@@ -2137,17 +2137,17 @@ local function updateDebugTab()
             local labels = tab.labels
             labels.mode.Text = "Build: " .. AIM_DEBUG.mode
             labels.hook.Text = "Hook: " .. AIM_DEBUG.hook
-            labels.env.Text = ("hookfunction=%s  getsenv=%s  controller=%s  bulletHit=%s  fremd-UI=%s"):format(
+            labels.env.Text = ("hookfunction=%s  getsenv=%s  controller=%s  bulletHit=%s  author-UI=%s"):format(
                 tostring(hookfunction ~= nil), tostring(getsenv ~= nil),
                 tostring(AIM_DEBUG.controller), tostring(AIM_DEBUG.bulletHit), tostring(AIM_DEBUG.uiLoaded)
             )
-            labels.calls.Text = ("getTarget: calls=%d  mit Ziel=%d"):format(AIM_DEBUG.calls, AIM_DEBUG.hits)
-            labels.last.Text = "Letztes Ziel: " .. AIM_DEBUG.lastTarget
+            labels.calls.Text = ("getTarget: calls=%d  with target=%d"):format(AIM_DEBUG.calls, AIM_DEBUG.hits)
+            labels.last.Text = "Last target: " .. AIM_DEBUG.lastTarget
             local parts = {}
             for reason, count in pairs(AIM_DEBUG.reasons) do
                 table.insert(parts, ("%s=%d"):format(reason, count))
             end
-            labels.reasons.Text = "Gruende: " .. (#parts > 0 and table.concat(parts, "  ") or "-")
+            labels.reasons.Text = "Reasons: " .. (#parts > 0 and table.concat(parts, "  ") or "-")
             local lines = {}
             for _, p in next, Players:GetPlayers() do
                 if p ~= plr then
@@ -2156,7 +2156,7 @@ local function updateDebugTab()
                     ))
                 end
             end
-            labels.players.Text = "Spieler:\n" .. table.concat(lines, "\n")
+            labels.players.Text = "Players:\n" .. table.concat(lines, "\n")
         end
     end
 end
@@ -2170,13 +2170,13 @@ keepConnection(RunService.RenderStepped:Connect(function()
         updateESP()
     end)
     if not ok then
-        warn("[menu] Render-Fehler: " .. tostring(err))
+        warn("[menu] render error: " .. tostring(err))
     end
 
     frameCounter += 1
     if frameCounter % 20 == 0 then
         pcall(function()
-            window:SetStatus(("%s  |  %d Spieler  |  %.0fs"):format(executor, #Players:GetPlayers(), os.clock() - startedAt))
+            window:SetStatus(("%s  |  %d players  |  %.0fs"):format(executor, #Players:GetPlayers(), os.clock() - startedAt))
             updateDebugTab()
         end)
     end
@@ -2189,14 +2189,14 @@ end))
 keepConnection(UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
 
-    -- Keybind-Aufnahme
+    -- keybind capture
     if UI.promptBind then
         local bind = UI.promptBind
         if input.UserInputType == Enum.UserInputType.Keyboard then
             Config.Keybinds[bind.keybind] = input.KeyCode
             UI.promptBind = nil
             if bind.refresh then bind.refresh() end
-            toast("Taste gesetzt: " .. input.KeyCode.Name, Theme.accent)
+            toast("Key set: " .. input.KeyCode.Name, Theme.accent)
         else
             UI.promptBind = nil
             if bind.refresh then bind.refresh() end
@@ -2221,14 +2221,14 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
             setPath("Aim.Enabled", value)
             UI:RefreshAll()
             onAimEnabledChanged(value)
-            toast("Silent Aim " .. (value and "AN" or "AUS"), value and Theme.success or Theme.dim)
+            toast("Silent Aim " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
         end
 
     elseif key == Config.Keybinds.ESPToggle then
         local value = not Config.ESP.Enabled
         setPath("ESP.Enabled", value)
         UI:RefreshAll()
-        toast("ESP " .. (value and "AN" or "AUS"), value and Theme.success or Theme.dim)
+        toast("ESP " .. (value and "ON" or "OFF"), value and Theme.success or Theme.dim)
 
     elseif key == Config.Keybinds.Noclip then
         local value = not Config.Player.Noclip
@@ -2276,11 +2276,11 @@ do
     if Config.Player.Noclip then pcall(setNoclip, true) end
     if Config.Player.Fullbright then pcall(setFullbright, true) end
 
-    -- Hook kam schon in [11] rein; hier nur noch ein Sicherheitsnetz
+    -- the hook was already installed in [11]; this is just a safety net
     if Config.Aim.Enabled and not State.hookInstalled then
         local ok, reason = pcall(installHook)
         if not ok then
-            AIM_DEBUG.hook = "Fehler: " .. tostring(reason)
+            AIM_DEBUG.hook = "Error: " .. tostring(reason)
         end
     end
 
@@ -2299,13 +2299,13 @@ do
         end
         if UI.gui then UI.gui:Destroy() end
         _G.__scpUnload = nil
-        warn("[menu] entladen")
+        warn("[menu] unloaded")
     end
 
-    toast("Silent Aim " .. (Config.Aim.Enabled and "AN" or "AUS") .. "  |  Hook: " .. AIM_DEBUG.hook,
-        AIM_DEBUG.hook == "installiert auf Controller.BulletHit" and Theme.success or Theme.danger)
-    toast("Tasten: K Menue, RightShift Aim, V ESP, N Noclip, B Fullbright", Theme.accent)
+    toast("Silent Aim " .. (Config.Aim.Enabled and "ON" or "OFF") .. "  |  Hook: " .. AIM_DEBUG.hook,
+        AIM_DEBUG.hook == "installed on Controller.BulletHit" and Theme.success or Theme.danger)
+    toast("Keys: K menu, RightShift aim, V ESP, N noclip, B fullbright", Theme.accent)
 
-    print(("[menu] v2.0 geladen | executor=%s | aim-build=%s | hook=%s")
+    print(("[menu] v2.0 loaded | executor=%s | aim-build=%s | hook=%s")
         :format(executor, AIM_DEBUG.mode, AIM_DEBUG.hook))
 end
