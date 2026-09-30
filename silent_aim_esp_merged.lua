@@ -94,7 +94,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.1 (2026-09-30)"
+local BUILD = "v2.2 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -601,7 +601,10 @@ local function healthColor(frac: number): Color3
     return bad:Lerp(mid, frac * 2)
 end
 
--- 2D bounding box of a character (nil if it cannot be projected)
+-- 2D bounding box of a character (nil if it cannot be projected sanely).
+-- Corners at or behind the near plane project to extreme coordinates, which
+-- used to produce screen-high boxes and healthbars, so they are skipped and
+-- the result is clamped to the viewport.
 local function projectBox(model: Model)
     local cam = currentCam()
     local ok, cf, size = pcall(function()
@@ -610,15 +613,16 @@ local function projectBox(model: Model)
     end)
     if not ok or typeof(cf) ~= "CFrame" then return nil end
 
+    local viewW, viewH = cam.ViewportSize.X, cam.ViewportSize.Y
     local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
-    local visible = false
+    local corners = 0
     for _, sx in ipairs({ -0.5, 0.5 }) do
         for _, sy in ipairs({ -0.5, 0.5 }) do
             for _, sz in ipairs({ -0.5, 0.5 }) do
                 local world = cf * Vector3.new(sx * size.X, sy * size.Y, sz * size.Z)
                 local sp, onScreen = cam:WorldToViewportPoint(world)
-                if onScreen or sp.Z > 0 then
-                    visible = true
+                if sp.Z > 1 and (onScreen or sp.Z > 0) then
+                    corners += 1
                     minX = math.min(minX, sp.X)
                     minY = math.min(minY, sp.Y)
                     maxX = math.max(maxX, sp.X)
@@ -627,22 +631,14 @@ local function projectBox(model: Model)
             end
         end
     end
-    if not visible or maxX <= minX or maxY <= minY then return nil end
-    return minX, minY, maxX, maxY
-end
 
-local function drawLine(frame: Frame, from: Vector2, to: Vector2, thickness: number)
-    local delta = to - from
-    local length = delta.Magnitude
-    if length <= 1 then
-        frame.Visible = false
-        return
-    end
-    frame.Visible = true
-    frame.AnchorPoint = Vector2.new(0, 0.5)
-    frame.Size = UDim2.fromOffset(math.floor(length), math.max(1, math.floor(thickness)))
-    frame.Position = UDim2.fromOffset(math.floor(from.X), math.floor(from.Y))
-    frame.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+    if corners < 2 then return nil end
+    minX = math.max(minX, -viewW * 0.25)
+    maxX = math.min(maxX, viewW * 1.25)
+    minY = math.max(minY, -viewH * 0.25)
+    maxY = math.min(maxY, viewH * 1.25)
+    if maxX - minX < 2 or maxY - minY < 6 then return nil end
+    return minX, minY, maxX, maxY
 end
 
 --=====================================================================
@@ -657,8 +653,8 @@ local State = {
     espGui = nil,
     fovFrame = nil,
     fovStroke = nil,
-    tracerFrame = nil,
     infoLabel = nil,
+    visualsGui = nil,
     connections = {},
     unloaded = false,
 }
@@ -687,9 +683,6 @@ local Config = {
         TargetPart = "Head",
         IgnoreForcefield = true,
         MaxDistance = 0,
-        Tracers = true,
-        TracerColor = Color3.fromRGB(88, 166, 255),
-        TracerThickness = 2,
         TargetInfo = true,
         InfoColor = Color3.fromRGB(240, 240, 240),
     },
@@ -1334,12 +1327,24 @@ end
 --=====================================================================
 -- [11] MENU BUILD
 --=====================================================================
+-- Visuals (FOV ring, target info, ESP, toasts) live in their own ScreenGui, so
+-- hiding the menu with K does not hide them.
+local visualsGui = new("ScreenGui", {
+    Name = "SCP_Visuals",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder = 99,
+}, guiParent())
+State.visualsGui = visualsGui
+State.espGui = visualsGui
+
 notifyHolder = new("Frame", {
     Name = "Notifications",
     Size = UDim2.new(0, 262, 0, 400),
     Position = UDim2.new(1, -278, 0, 60),
     BackgroundTransparency = 1,
-})
+}, visualsGui)
 list(notifyHolder, 6)
 
 -- Load the config and install the aim BEFORE the menu is built, so that
@@ -1360,8 +1365,6 @@ local window = UI:Window({
     size = UDim2.fromOffset(680, 450),
     position = UDim2.fromOffset(70, 110),
 })
-notifyHolder.Parent = UI.gui
-State.espGui = UI.gui
 
 -- ------------------------------------------------------- element binders
 local function bindToggle(section, spec)
@@ -1918,9 +1921,6 @@ local menuOk, menuErr = pcall(function()
         local v = aimTab:Section("Visuals")
         v:Toggle({ text = "FOV circle", path = "Aim.ShowFOV" })
         v:Color({ text = "FOV color", path = "Aim.FOVColor" })
-        v:Toggle({ text = "Tracer", path = "Aim.Tracers" })
-        v:Color({ text = "Tracer color", path = "Aim.TracerColor" })
-        v:Slider({ text = "Tracer thickness", path = "Aim.TracerThickness", min = 1, max = 6, step = 1, suffix = " px" })
         v:Toggle({ text = "Target info at the crosshair", path = "Aim.TargetInfo" })
         v:Color({ text = "Info color", path = "Aim.InfoColor" })
     end
@@ -2028,7 +2028,7 @@ end
 --=====================================================================
 local function ensureAimVisuals()
     if State.fovFrame then return end
-    local parent = UI.gui or guiParent()
+    local parent = State.visualsGui or UI.gui or guiParent()
 
     local fov = new("Frame", {
         Name = "FOV",
@@ -2039,13 +2039,6 @@ local function ensureAimVisuals()
     corner(fov, 999)
     State.fovStroke = stroke(fov, Theme.accent, 1.5, 0)
     State.fovFrame = fov
-
-    State.tracerFrame = new("Frame", {
-        Name = "Tracer",
-        BackgroundColor3 = Theme.accent,
-        BorderSizePixel = 0,
-        Visible = false,
-    }, parent)
 
     State.infoLabel = new("TextLabel", {
         Name = "TargetInfo",
@@ -2061,28 +2054,9 @@ local function ensureAimVisuals()
     }, parent)
 end
 
-local function gunScreenPoint(): Vector2
-    local cam = currentCam()
-    local char = plr.Character
-    if char then
-        local tool = char:FindFirstChildOfClass("Tool")
-        local handle = tool and tool:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") then
-            local sp, onScreen = cam:WorldToViewportPoint(handle.Position)
-            if onScreen then return Vector2.new(sp.X, sp.Y) end
-        end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            local sp, onScreen = cam:WorldToViewportPoint(hrp.Position)
-            if onScreen then return Vector2.new(sp.X, sp.Y) end
-        end
-    end
-    return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
-end
-
 local function updateAimVisuals()
     local cfg = Config.Aim
-    if not UI.gui then return end
+    if not State.visualsGui then return end
     ensureAimVisuals()
     local active = cfg.Enabled and not USE_AUTHOR_AIM_UI
 
@@ -2097,23 +2071,11 @@ local function updateAimVisuals()
     end
 
     local target, targetPlayer
-    if active and (cfg.Tracers or cfg.TargetInfo) then
+    if active and cfg.TargetInfo then
         target = findTarget(currentCam().CFrame.Position, true)
         if target then
             targetPlayer = Players:GetPlayerFromCharacter(target.Parent :: any)
         end
-    end
-
-    if active and cfg.Tracers and target then
-        local sp, onScreen = currentCam():WorldToViewportPoint(target.Position)
-        if onScreen then
-            State.tracerFrame.BackgroundColor3 = cfg.TracerColor
-            drawLine(State.tracerFrame, gunScreenPoint(), Vector2.new(sp.X, sp.Y), cfg.TracerThickness)
-        else
-            State.tracerFrame.Visible = false
-        end
-    else
-        State.tracerFrame.Visible = false
     end
 
     if active and cfg.TargetInfo and target and targetPlayer then
@@ -2319,6 +2281,7 @@ do
             pcall(restorefunction, State.bulletHit)
         end
         if UI.gui then UI.gui:Destroy() end
+        if State.visualsGui then State.visualsGui:Destroy() end
         _G.__scpUnload = nil
         warn("[menu] unloaded")
     end

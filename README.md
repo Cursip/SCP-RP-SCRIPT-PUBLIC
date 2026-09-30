@@ -34,7 +34,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-
 
 | Key | Action |
 |---|---|
-| `K` | show/hide the menu |
+| `K` | show/hide the menu (the FOV ring, target info, ESP and toasts stay visible — they live in their own ScreenGui) |
 | `RightShift` | toggle silent aim (or hold it, if "Only while key is held" is on) |
 | `V` | toggle ESP |
 | `N` | noclip |
@@ -47,7 +47,7 @@ To rebind: click the key button on the right of a switch, then press the new key
 **Silent Aim**
 - enabled, hold-to-aim, FOV radius, max distance
 - team check, visible targets only, ignore ForceField, target part (`Head` / `HumanoidRootPart` / `Nearest`)
-- FOV circle + colour, tracers + colour + thickness, target info (name / HP / distance) at the crosshair
+- FOV circle + colour, target info (name / HP / distance) at the crosshair
 
 **ESP**
 - enabled, team check, visible players only, max distance
