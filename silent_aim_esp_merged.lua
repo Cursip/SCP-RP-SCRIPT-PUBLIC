@@ -172,17 +172,17 @@ local Theme = {
     stroke = Color3.fromRGB(43, 47, 57),
 }
 
-local function new(class: string, props: { [string]: any }?, children: { Instance }?)
+-- Build an instance. The third argument is the PARENT (that is the calling
+-- convention everywhere in this file): new("Frame", {...}, someParent).
+local function new(class: string, props: { [string]: any }?, parent: Instance?)
     local inst = Instance.new(class)
     if props then
         for k, v in pairs(props) do
             inst[k] = v
         end
     end
-    if children then
-        for _, child in ipairs(children) do
-            child.Parent = inst
-        end
+    if parent then
+        inst.Parent = parent
     end
     return inst
 end
@@ -266,7 +266,7 @@ function UI:Window(spec)
         BackgroundColor3 = Theme.window,
         BorderSizePixel = 0,
         ClipsDescendants = true,
-    }, { screen })
+    }, screen)
     corner(win, 10)
     stroke(win, Theme.stroke, 1, 0.25)
 
@@ -276,13 +276,13 @@ function UI:Window(spec)
         Size = UDim2.new(1, 0, 0, 38),
         BackgroundColor3 = Color3.fromRGB(18, 20, 25),
         BorderSizePixel = 0,
-    }, { win })
+    }, win)
     new("Frame", {
         Size = UDim2.new(1, 0, 0, 1),
         Position = UDim2.new(0, 0, 1, -1),
         BackgroundColor3 = Theme.stroke,
         BorderSizePixel = 0,
-    }, { bar })
+    }, bar)
 
     new("TextLabel", {
         Size = UDim2.new(0, 320, 1, 0),
@@ -293,7 +293,7 @@ function UI:Window(spec)
         TextColor3 = Theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = (spec.title or "Menu") .. (spec.version and ("   " .. spec.version) or ""),
-    }, { bar })
+    }, bar)
 
     local statusLabel = new("TextLabel", {
         Size = UDim2.new(0, 260, 1, 0),
@@ -305,7 +305,7 @@ function UI:Window(spec)
         TextColor3 = Theme.dim,
         TextXAlignment = Enum.TextXAlignment.Right,
         Text = spec.subtitle or "",
-    }, { bar })
+    }, bar)
 
     local collapseBtn = new("TextButton", {
         Size = UDim2.fromOffset(26, 26),
@@ -318,7 +318,7 @@ function UI:Window(spec)
         Text = "-",
         AutoButtonColor = false,
         ZIndex = 3,
-    }, { bar })
+    }, bar)
     corner(collapseBtn, 6)
     hover(collapseBtn, Theme.element, Theme.elementHover)
 
@@ -333,7 +333,7 @@ function UI:Window(spec)
         Text = "x",
         AutoButtonColor = false,
         ZIndex = 3,
-    }, { bar })
+    }, bar)
     corner(hideBtn, 6)
     hover(hideBtn, Theme.element, Theme.danger)
 
@@ -342,13 +342,13 @@ function UI:Window(spec)
         Size = UDim2.new(1, 0, 1, -38),
         Position = UDim2.fromOffset(0, 38),
         BackgroundTransparency = 1,
-    }, { win })
+    }, win)
 
     local sidebar = new("Frame", {
         Size = UDim2.new(0, 158, 1, 0),
         BackgroundColor3 = Theme.sidebar,
         BorderSizePixel = 0,
-    }, { body })
+    }, body)
     local sidebarPad = Instance.new("UIPadding")
     sidebarPad.PaddingTop = UDim.new(0, 10)
     sidebarPad.PaddingLeft = UDim.new(0, 10)
@@ -360,7 +360,7 @@ function UI:Window(spec)
         Size = UDim2.new(1, -158, 1, 0),
         Position = UDim2.fromOffset(158, 0),
         BackgroundTransparency = 1,
-    }, { body })
+    }, body)
 
     local window = {
         gui = screen,
@@ -424,7 +424,7 @@ function UI:Window(spec)
             TextXAlignment = Enum.TextXAlignment.Left,
             Text = "  " .. name,
             AutoButtonColor = false,
-        }, { sidebar })
+        }, sidebar)
         corner(button, 6)
 
         local page = new("ScrollingFrame", {
@@ -436,7 +436,7 @@ function UI:Window(spec)
             CanvasSize = UDim2.new(0, 0, 0, 0),
             AutomaticCanvasSize = Enum.AutomaticSize.Y,
             Visible = false,
-        }, { content })
+        }, content)
         local pagePad = Instance.new("UIPadding")
         pagePad.PaddingTop = UDim.new(0, 12)
         pagePad.PaddingBottom = UDim.new(0, 16)
@@ -486,14 +486,14 @@ function UI:Section(tab, title: string)
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = string.upper(title),
         LayoutOrder = order,
-    }, { tab.page })
+    }, tab.page)
 
     local holder = new("Frame", {
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1,
         LayoutOrder = order + 1,
-    }, { tab.page })
+    }, tab.page)
     list(holder, 6)
 
     local section = { holder = holder, index = 0 }
@@ -515,7 +515,7 @@ function UI:Section(tab, title: string)
             TextWrapped = true,
             Text = text,
             LayoutOrder = self:next(),
-        }, { self.holder })
+        }, self.holder)
     end
 
     function section:Button(spec)
@@ -529,7 +529,7 @@ function UI:Section(tab, title: string)
             Text = spec.text,
             AutoButtonColor = false,
             LayoutOrder = self:next(),
-        }, { self.holder })
+        }, self.holder)
         corner(b, 7)
         stroke(b, Theme.stroke, 1, 0.5)
         hover(b, Theme.element, Theme.elementHover)
@@ -1098,7 +1098,7 @@ local function createESPObjects(p: Player)
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Visible = false,
-    }, { parent })
+    }, parent)
     objects.box = box
     objects.boxStroke = stroke(box, Color3.new(1, 1, 1), cfg.BoxThickness, cfg.BoxTransparency)
 
@@ -1113,7 +1113,7 @@ local function createESPObjects(p: Player)
         TextStrokeColor3 = Color3.new(0, 0, 0),
         Text = p.Name,
         Visible = false,
-    }, { parent })
+    }, parent)
 
     objects.dist = new("TextLabel", {
         Name = "esp_dist_" .. p.UserId,
@@ -1126,7 +1126,7 @@ local function createESPObjects(p: Player)
         TextStrokeColor3 = Color3.new(0, 0, 0),
         Text = "",
         Visible = false,
-    }, { parent })
+    }, parent)
 
     local hpBg = new("Frame", {
         Name = "esp_hpbg_" .. p.UserId,
@@ -1134,7 +1134,7 @@ local function createESPObjects(p: Player)
         BackgroundTransparency = 0.35,
         BorderSizePixel = 0,
         Visible = false,
-    }, { parent })
+    }, parent)
     corner(hpBg, 2)
     local hpFill = new("Frame", {
         Name = "esp_hp_" .. p.UserId,
@@ -1143,7 +1143,7 @@ local function createESPObjects(p: Player)
         Position = UDim2.new(0, 0, 1, 0),
         BackgroundColor3 = Theme.success,
         BorderSizePixel = 0,
-    }, { hpBg })
+    }, hpBg)
     corner(hpFill, 2)
     objects.hpBg = hpBg
     objects.hpFill = hpFill
@@ -1213,9 +1213,9 @@ local function updateESP()
                 objects.highlight.OutlineTransparency = cfg.OutlineTransparency
                 objects.highlight.DepthMode = cfg.AlwaysOnTop and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
 
-                local box = projectBox(char)
-                if box then
-                    local minX, minY, maxX, maxY = box
+                -- must be a multiple assignment: projectBox returns four values
+                local minX, minY, maxX, maxY = projectBox(char)
+                if minX then
                     local w, h = maxX - minX, maxY - minY
 
                     objects.box.Visible = cfg.Box
@@ -1366,7 +1366,7 @@ local function bindToggle(section, spec)
         BackgroundColor3 = Theme.element,
         BorderSizePixel = 0,
         LayoutOrder = section:next(),
-    }, { section.holder })
+    }, section.holder)
     corner(holder, 7)
     stroke(holder, Theme.stroke, 1, 0.5)
 
@@ -1379,14 +1379,14 @@ local function bindToggle(section, spec)
         TextColor3 = Theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = spec.text,
-    }, { holder })
+    }, holder)
 
     local pill = new("Frame", {
         Size = UDim2.fromOffset(38, 20),
         Position = UDim2.new(1, -50, 0.5, -10),
         BackgroundColor3 = Theme.stroke,
         BorderSizePixel = 0,
-    }, { holder })
+    }, holder)
     corner(pill, 10)
 
     local knob = new("Frame", {
@@ -1394,7 +1394,7 @@ local function bindToggle(section, spec)
         Position = UDim2.fromOffset(2, 2),
         BackgroundColor3 = Color3.fromRGB(210, 214, 220),
         BorderSizePixel = 0,
-    }, { pill })
+    }, pill)
     corner(knob, 8)
 
     local keyBtn
@@ -1410,7 +1410,7 @@ local function bindToggle(section, spec)
             Text = "-",
             AutoButtonColor = false,
             ZIndex = 3,
-        }, { holder })
+        }, holder)
         corner(keyBtn, 5)
         stroke(keyBtn, Theme.stroke, 1, 0.4)
     end
@@ -1440,7 +1440,7 @@ local function bindToggle(section, spec)
         Text = "",
         AutoButtonColor = false,
         ZIndex = 1,
-    }, { holder })
+    }, holder)
     clickRow.MouseButton1Click:Connect(function()
         apply(not getPath(spec.path), true)
     end)
@@ -1478,7 +1478,7 @@ local function bindSlider(section, spec)
         BackgroundColor3 = Theme.element,
         BorderSizePixel = 0,
         LayoutOrder = section:next(),
-    }, { section.holder })
+    }, section.holder)
     corner(holder, 7)
     stroke(holder, Theme.stroke, 1, 0.5)
 
@@ -1491,7 +1491,7 @@ local function bindSlider(section, spec)
         TextColor3 = Theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = spec.text,
-    }, { holder })
+    }, holder)
 
     local valueLabel = new("TextLabel", {
         Size = UDim2.new(0.28, -12, 0, 18),
@@ -1502,7 +1502,7 @@ local function bindSlider(section, spec)
         TextColor3 = Theme.accent,
         TextXAlignment = Enum.TextXAlignment.Right,
         Text = "",
-    }, { holder })
+    }, holder)
 
     local track = new("Frame", {
         Size = UDim2.new(1, -24, 0, 8),
@@ -1510,14 +1510,14 @@ local function bindSlider(section, spec)
         BackgroundColor3 = Theme.window,
         BorderSizePixel = 0,
         Active = true,
-    }, { holder })
+    }, holder)
     corner(track, 4)
 
     local fill = new("Frame", {
         Size = UDim2.new(0, 0, 1, 0),
         BackgroundColor3 = Theme.accent,
         BorderSizePixel = 0,
-    }, { track })
+    }, track)
     corner(fill, 4)
 
     local dragging = false
@@ -1592,7 +1592,7 @@ local function bindDropdown(section, spec)
         BackgroundColor3 = Theme.element,
         BorderSizePixel = 0,
         LayoutOrder = section:next(),
-    }, { section.holder })
+    }, section.holder)
     corner(holder, 7)
     stroke(holder, Theme.stroke, 1, 0.5)
 
@@ -1605,7 +1605,7 @@ local function bindDropdown(section, spec)
         TextColor3 = Theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = spec.text,
-    }, { holder })
+    }, holder)
 
     local valueLabel = new("TextLabel", {
         Size = UDim2.new(0.45, -12, 1, 0),
@@ -1616,7 +1616,7 @@ local function bindDropdown(section, spec)
         TextColor3 = Theme.accent,
         TextXAlignment = Enum.TextXAlignment.Right,
         Text = "",
-    }, { holder })
+    }, holder)
 
     local popup, backdrop
     local function closePopup()
@@ -1630,7 +1630,7 @@ local function bindDropdown(section, spec)
         Text = "",
         AutoButtonColor = false,
         ZIndex = 2,
-    }, { holder })
+    }, holder)
 
     button.MouseButton1Click:Connect(function()
         if popup then
@@ -1643,7 +1643,7 @@ local function bindDropdown(section, spec)
             BackgroundTransparency = 1,
             Text = "",
             ZIndex = 40,
-        }, { UI.gui })
+        }, UI.gui)
         backdrop.MouseButton1Click:Connect(closePopup)
 
         popup = new("Frame", {
@@ -1652,7 +1652,7 @@ local function bindDropdown(section, spec)
             BackgroundColor3 = Theme.panel,
             BorderSizePixel = 0,
             ZIndex = 41,
-        }, { UI.gui })
+        }, UI.gui)
         corner(popup, 7)
         stroke(popup, Theme.stroke, 1, 0.2)
         list(popup, 2)
@@ -1670,7 +1670,7 @@ local function bindDropdown(section, spec)
                 Text = "  " .. tostring(option),
                 AutoButtonColor = false,
                 ZIndex = 42,
-            }, { popup })
+            }, popup)
             corner(item, 5)
             hover(item, Theme.element, Theme.elementHover)
             item.MouseButton1Click:Connect(function()
@@ -1707,7 +1707,7 @@ local function bindColor(section, spec)
         BackgroundColor3 = Theme.element,
         BorderSizePixel = 0,
         LayoutOrder = section:next(),
-    }, { section.holder })
+    }, section.holder)
     corner(holder, 7)
     stroke(holder, Theme.stroke, 1, 0.5)
 
@@ -1720,7 +1720,7 @@ local function bindColor(section, spec)
         TextColor3 = Theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = spec.text,
-    }, { holder })
+    }, holder)
 
     local swatch = new("TextButton", {
         Size = UDim2.fromOffset(52, 18),
@@ -1730,7 +1730,7 @@ local function bindColor(section, spec)
         Text = "",
         AutoButtonColor = false,
         ZIndex = 2,
-    }, { holder })
+    }, holder)
     corner(swatch, 5)
     stroke(swatch, Theme.stroke, 1, 0.3)
 
@@ -1751,7 +1751,7 @@ local function bindColor(section, spec)
             BackgroundTransparency = 1,
             Text = "",
             ZIndex = 40,
-        }, { UI.gui })
+        }, UI.gui)
         backdrop.MouseButton1Click:Connect(closePopup)
 
         popup = new("Frame", {
@@ -1763,7 +1763,7 @@ local function bindColor(section, spec)
             BackgroundColor3 = Theme.panel,
             BorderSizePixel = 0,
             ZIndex = 41,
-        }, { UI.gui })
+        }, UI.gui)
         corner(popup, 8)
         stroke(popup, Theme.stroke, 1, 0.2)
 
@@ -1775,7 +1775,7 @@ local function bindColor(section, spec)
             BackgroundColor3 = current,
             BorderSizePixel = 0,
             ZIndex = 42,
-        }, { popup })
+        }, popup)
         corner(preview, 6)
 
         local function applyColor()
@@ -1797,7 +1797,7 @@ local function bindColor(section, spec)
                 Position = UDim2.fromOffset(10, 40 + (index - 1) * 26),
                 BackgroundTransparency = 1,
                 ZIndex = 42,
-            }, { popup })
+            }, popup)
 
             new("TextLabel", {
                 Size = UDim2.fromOffset(14, 22),
@@ -1807,7 +1807,7 @@ local function bindColor(section, spec)
                 TextColor3 = Theme.dim,
                 Text = channel,
                 ZIndex = 43,
-            }, { trackHolder })
+            }, trackHolder)
 
             local track = new("Frame", {
                 Size = UDim2.new(1, -20, 0, 8),
@@ -1816,7 +1816,7 @@ local function bindColor(section, spec)
                 BorderSizePixel = 0,
                 Active = true,
                 ZIndex = 43,
-            }, { trackHolder })
+            }, trackHolder)
             corner(track, 4)
 
             local fill = new("Frame", {
@@ -1824,7 +1824,7 @@ local function bindColor(section, spec)
                 BackgroundColor3 = Theme.accent,
                 BorderSizePixel = 0,
                 ZIndex = 44,
-            }, { track })
+            }, track)
             corner(fill, 4)
 
             local dragging = false
@@ -2031,7 +2031,7 @@ local function ensureAimVisuals()
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Visible = false,
-    }, { parent })
+    }, parent)
     corner(fov, 999)
     State.fovStroke = stroke(fov, Theme.accent, 1.5, 0)
     State.fovFrame = fov
@@ -2041,7 +2041,7 @@ local function ensureAimVisuals()
         BackgroundColor3 = Theme.accent,
         BorderSizePixel = 0,
         Visible = false,
-    }, { parent })
+    }, parent)
 
     State.infoLabel = new("TextLabel", {
         Name = "TargetInfo",
@@ -2054,7 +2054,7 @@ local function ensureAimVisuals()
         TextStrokeColor3 = Color3.new(0, 0, 0),
         Text = "",
         Visible = false,
-    }, { parent })
+    }, parent)
 end
 
 local function gunScreenPoint(): Vector2
@@ -2162,6 +2162,7 @@ local function updateDebugTab()
 end
 
 local frameCounter = 0
+local lastRenderError = 0
 keepConnection(RunService.RenderStepped:Connect(function()
     if State.unloaded then return end
 
@@ -2170,7 +2171,11 @@ keepConnection(RunService.RenderStepped:Connect(function()
         updateESP()
     end)
     if not ok then
-        warn("[menu] render error: " .. tostring(err))
+        -- throttle: a per-frame error would otherwise flood the console
+        if os.clock() - lastRenderError > 2 then
+            lastRenderError = os.clock()
+            warn("[menu] render error: " .. tostring(err))
+        end
     end
 
     frameCounter += 1
@@ -2186,8 +2191,18 @@ keepConnection(RunService.RenderStepped:Connect(function()
     end
 end))
 
+local keysDown = {}
+
 keepConnection(UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
+
+    -- Holding a key makes Roblox fire repeated InputBegan events (OS key
+    -- repeat). Without this guard a held key toggles a feature on and off.
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local wasDown = keysDown[input.KeyCode]
+        keysDown[input.KeyCode] = true
+        if wasDown then return end
+    end
 
     -- keybind capture
     if UI.promptBind then
@@ -2245,8 +2260,11 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
 end))
 
 keepConnection(UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Config.Keybinds.AimToggle then
-        State.aimKeyDown = false
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        keysDown[input.KeyCode] = nil
+        if input.KeyCode == Config.Keybinds.AimToggle then
+            State.aimKeyDown = false
+        end
     end
 end))
 
