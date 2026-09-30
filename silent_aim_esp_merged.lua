@@ -106,7 +106,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.0 (2026-09-30)"
+local BUILD = "v3.1 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -704,6 +704,7 @@ local Config = {
         AutoFire = false,
         HoldToAim = false,
         FOV = 300,
+        FovOrigin = "Crosshair (screen centre)",
         ShowFOV = true,
         FOVColor = Color3.fromRGB(88, 166, 255),
         TeamCheck = true,
@@ -939,6 +940,18 @@ local function loadProfile(silent: boolean?)
     return loadConfig(silent, profileFile())
 end
 
+-- Where the FOV circle sits and where target selection is measured from. The
+-- mouse cursor is the real cursor in third person but is locked to the middle in
+-- first person, which made the circle jump when switching perspective. The
+-- screen centre stays put and matches the crosshair.
+local function aimOrigin(): Vector2
+    if Config.Aim.FovOrigin == "Mouse cursor" then
+        return mousePoint()
+    end
+    local cam = currentCam()
+    return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+end
+
 --=====================================================================
 -- [8] SILENT AIM
 --=====================================================================
@@ -1121,7 +1134,7 @@ local function findTarget(origin: Vector3?, forVisual: boolean?)
                                 dbgReason("blocked")
                             else
                                 if hitPart then part = hitPart end
-                                local px = (Vector2.new(pos.X, pos.Y) - mousePoint()).Magnitude
+                                local px = (Vector2.new(pos.X, pos.Y) - aimOrigin()).Magnitude
                                 if px < bestDist then
                                     best, bestPlayer, bestDist = part, player, px
                                     dbgReason("accepted")
@@ -1877,7 +1890,7 @@ local function autoFireStep()
     if not target then return end
     local pos, onScreen = cam:WorldToViewportPoint(target.Position)
     if not onScreen then return end
-    local centre = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    local centre = aimOrigin()
     if (Vector2.new(pos.X, pos.Y) - centre).Magnitude > 12 then return end
     pcall(mouse1click)
 end
@@ -2823,6 +2836,8 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Never target researchers", path = "Aim.IgnoreRoles" })
         s:Label("Role words: " .. table.concat(Config.Aim.RoleIgnoreList, ", "))
         s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
+        s:Dropdown({ text = "FOV centre", path = "Aim.FovOrigin", options = { "Crosshair (screen centre)", "Mouse cursor" } })
+        s:Label("Crosshair keeps the FOV circle in the middle in every camera mode. Mouse cursor follows your pointer, which is what made the circle jump between third and first person.")
         s:Dropdown({ text = "Aim mode", path = "Aim.Mode", options = { "Silent (BulletHit)", "Camera assist" }, onChanged = onAimModeChanged })
         s:Slider({ text = "Camera assist smoothness", path = "Aim.Smoothness", min = 0.05, max = 1, step = 0.05, decimals = 2 })
         s:Slider({ text = "Prediction (lead moving targets)", path = "Aim.Prediction", min = 0, max = 0.5, step = 0.05, decimals = 2 })
@@ -3067,7 +3082,7 @@ local function updateAimVisuals()
     local active = cfg.Enabled and not USE_AUTHOR_AIM_UI
 
     if active and cfg.ShowFOV then
-        local point = mousePoint()
+        local point = aimOrigin()
         State.fovFrame.Visible = true
         State.fovFrame.Size = UDim2.fromOffset(cfg.FOV * 2, cfg.FOV * 2)
         State.fovFrame.Position = UDim2.fromOffset(math.floor(point.X - cfg.FOV), math.floor(point.Y - cfg.FOV))
@@ -3088,7 +3103,7 @@ local function updateAimVisuals()
         local char = targetPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         local dist = (currentCam().CFrame.Position - target.Position).Magnitude
-        local point = mousePoint()
+        local point = aimOrigin()
         State.infoLabel.Visible = true
         State.infoLabel.TextColor3 = cfg.InfoColor
         State.infoLabel.Text = ("%s  |  %d HP  |  %d studs"):format(
