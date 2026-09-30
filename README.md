@@ -47,6 +47,7 @@ To rebind: click the key button on the right of a switch, then press the new key
 **Silent Aim**
 - enabled, hold-to-aim, FOV radius, max distance
 - team check, visible targets only, ignore ForceField, target part (`Head` / `HumanoidRootPart` / `Nearest`)
+- "never target researchers": a role filter (researchers are a role, not always a team, so team name, role attributes and the character's labels are checked). The words to match live in `Config.Aim.RoleIgnoreList` (`researcher`, `forscher`, `research`, `wissenschaftler`) — the menu shows the current list, add words in the file if the game reports something else. The Debug tab shows per player what was detected (`ignored=true/false role="..."`).
 - FOV circle + colour, target info (name / HP / distance) at the crosshair
 
 **ESP**

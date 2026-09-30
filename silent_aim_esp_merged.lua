@@ -94,7 +94,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.2 (2026-09-30)"
+local BUILD = "v2.3 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -683,6 +683,8 @@ local Config = {
         TargetPart = "Head",
         IgnoreForcefield = true,
         MaxDistance = 0,
+        IgnoreRoles = true,
+        RoleIgnoreList = { "researcher", "forscher", "research", "wissenschaftler" },
         TargetInfo = true,
         InfoColor = Color3.fromRGB(240, 240, 240),
     },
@@ -900,6 +902,59 @@ local function pickTargetPart(char: Model, origin: Vector3): BasePart?
     return (char:FindFirstChild("Head") or char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")) :: any
 end
 
+-- Text labels the game puts on a character (role, rank, ...). Cached with weak
+-- keys, because scanning every descendant on each aim call is wasteful.
+local labelCache = setmetatable({}, { __mode = "k" })
+
+local function characterLabels(player: Player, char: Model): { string }
+    local entry = labelCache[char]
+    local now = os.clock()
+    if entry and (#entry.texts > 0 or now - entry.at < 3) then
+        return entry.texts
+    end
+    local texts = {}
+    for _, descendant in ipairs(char:GetDescendants()) do
+        if descendant:IsA("TextLabel") then
+            local text = descendant.Text
+            -- skip the player's own name, so a player named "Researcher" is
+            -- not mistaken for the role
+            if type(text) == "string" and #text > 0 and text ~= player.Name and text ~= player.DisplayName then
+                table.insert(texts, text)
+            end
+        end
+    end
+    labelCache[char] = { texts = texts, at = now }
+    return texts
+end
+
+local function matchesRoleList(text: string?): boolean
+    if type(text) ~= "string" or #text == 0 then return false end
+    local lower = string.lower(text)
+    for _, needle in ipairs(Config.Aim.RoleIgnoreList) do
+        if type(needle) == "string" and #needle > 0 and string.find(lower, needle, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- true = never aim at this player. Researchers are a role, not always a team,
+-- so the team name, role attributes and the character's labels are checked.
+local function isIgnoredRole(player: Player, char: Model?): boolean
+    if not Config.Aim.IgnoreRoles then return false end
+    if matchesRoleList(player.Team and player.Team.Name) then return true end
+    for _, attribute in ipairs({ "Role", "RoleName", "Team", "Class", "Job" }) do
+        local value = player:GetAttribute(attribute)
+        if type(value) == "string" and matchesRoleList(value) then return true end
+    end
+    if char then
+        for _, text in ipairs(characterLabels(player, char)) do
+            if matchesRoleList(text) then return true end
+        end
+    end
+    return false
+end
+
 -- Returns the target part or nil. forVisual = display only (not counted
 -- in the stats and ignores "only while key is held").
 local function findTarget(origin: Vector3?, forVisual: boolean?)
@@ -920,7 +975,9 @@ local function findTarget(origin: Vector3?, forVisual: boolean?)
             else
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
-                if not (char and hum) then
+                if isIgnoredRole(player, char) then
+                    dbgReason("ignored role")
+                elseif not (char and hum) then
                     dbgReason("no char")
                 elseif hum.Health <= 0 then
                     dbgReason("dead")
@@ -1916,6 +1973,8 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Team check", path = "Aim.TeamCheck" })
         s:Toggle({ text = "Visible targets only", path = "Aim.VisibleOnly" })
         s:Toggle({ text = "Ignore ForceField", path = "Aim.IgnoreForcefield" })
+        s:Toggle({ text = "Never target researchers", path = "Aim.IgnoreRoles" })
+        s:Label("Role words: " .. table.concat(Config.Aim.RoleIgnoreList, ", "))
         s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
 
         local v = aimTab:Section("Visuals")
@@ -2117,9 +2176,13 @@ local function updateDebugTab()
             local lines = {}
             for _, p in next, Players:GetPlayers() do
                 if p ~= plr then
-                    table.insert(lines, ("%s [%s] same=%s"):format(
-                        p.Name, p.Team and p.Team.Name or "NONE", tostring(isSameTeam(p, false))
-                    ))
+                    local sample = ""
+                    local pchar = p.Character
+                    if pchar then
+                        local texts = characterLabels(p, pchar)
+                        if #texts > 0 then sample = " role=\"" .. string.sub(texts[1], 1, 24) .. "\"" end
+                    end
+                    table.insert(lines, ("%s [%s] same=%s ignored=%s%s"):format(p.Name, p.Team and p.Team.Name or "NONE", tostring(isSameTeam(p, false)), tostring(isIgnoredRole(p, pchar)), sample))
                 end
             end
             labels.players.Text = "Players:\n" .. table.concat(lines, "\n")
