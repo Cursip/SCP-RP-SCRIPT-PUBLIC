@@ -106,7 +106,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.1 (2026-09-30)"
+local BUILD = "v3.2 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -603,14 +603,6 @@ local function isVisiblePart(part: BasePart?, origin: Vector3): (boolean, BasePa
     return false, result.Instance :: any
 end
 
-local function mousePoint(): Vector2
-    if isMobile() then
-        local cam = currentCam()
-        return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-    end
-    return UIS:GetMouseLocation()
-end
-
 local function healthColor(frac: number): Color3
     local bad = Color3.fromRGB(236, 96, 96)
     local mid = Color3.fromRGB(236, 196, 96)
@@ -704,7 +696,6 @@ local Config = {
         AutoFire = false,
         HoldToAim = false,
         FOV = 300,
-        FovOrigin = "Crosshair (screen centre)",
         ShowFOV = true,
         FOVColor = Color3.fromRGB(88, 166, 255),
         TeamCheck = true,
@@ -940,14 +931,11 @@ local function loadProfile(silent: boolean?)
     return loadConfig(silent, profileFile())
 end
 
--- Where the FOV circle sits and where target selection is measured from. The
--- mouse cursor is the real cursor in third person but is locked to the middle in
--- first person, which made the circle jump when switching perspective. The
--- screen centre stays put and matches the crosshair.
+-- The FOV circle and the target selection are always measured from the middle
+-- of the screen, where the crosshair is. Measuring from the mouse made the
+-- circle follow the free cursor in third person and jump to the middle in first
+-- person, where the cursor is locked - so it is fixed to the centre now.
 local function aimOrigin(): Vector2
-    if Config.Aim.FovOrigin == "Mouse cursor" then
-        return mousePoint()
-    end
     local cam = currentCam()
     return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
 end
@@ -2836,8 +2824,6 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Never target researchers", path = "Aim.IgnoreRoles" })
         s:Label("Role words: " .. table.concat(Config.Aim.RoleIgnoreList, ", "))
         s:Dropdown({ text = "Target part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
-        s:Dropdown({ text = "FOV centre", path = "Aim.FovOrigin", options = { "Crosshair (screen centre)", "Mouse cursor" } })
-        s:Label("Crosshair keeps the FOV circle in the middle in every camera mode. Mouse cursor follows your pointer, which is what made the circle jump between third and first person.")
         s:Dropdown({ text = "Aim mode", path = "Aim.Mode", options = { "Silent (BulletHit)", "Camera assist" }, onChanged = onAimModeChanged })
         s:Slider({ text = "Camera assist smoothness", path = "Aim.Smoothness", min = 0.05, max = 1, step = 0.05, decimals = 2 })
         s:Slider({ text = "Prediction (lead moving targets)", path = "Aim.Prediction", min = 0, max = 0.5, step = 0.05, decimals = 2 })

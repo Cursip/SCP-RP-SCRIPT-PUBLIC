@@ -55,7 +55,7 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 **Silent Aim**
 - enabled, hold-to-aim, FOV radius, max distance
-- **FOV centre**: `Crosshair (screen centre)` by default, so the circle stays in the middle in every camera mode; `Mouse cursor` makes it follow the pointer (it jumps between third and first person, because the cursor is locked to the middle in first person)
+- the FOV circle and the target selection are always measured from the middle of the screen, where the crosshair is, so the circle stays put in every camera mode
 - **aim mode**: `Silent (BulletHit)` — SCP:RP only, hooks the game's shot function — or `Camera assist`, which turns your own camera and therefore works in any game (with a smoothness slider)
 - optional auto-fire when the crosshair is on the target (risky, off by default)
 - prediction slider (leads moving targets) and a hitbox expander (enlarges other players' head locally, mostly useful in games that hit-test on the client)
