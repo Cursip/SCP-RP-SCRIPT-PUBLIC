@@ -87,7 +87,11 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 **Settings**
 - menu visible, UI scale
-- **wheel while the menu is open does not zoom the camera** (default on, Settings → Menu). The wheel is sunk at the highest action priority, and the binding exists **only while the menu is open** — it is created on open and unbound on close, so with the menu closed nothing of ours is in the input path and zoom behaves exactly as usual. No pointer or coordinate detection is involved any more; v3.4 tried to detect "pointer over the menu" from the mouse position and window rectangle, which landed beside the window because of the 36 px GUI inset. The Debug tab shows `menu open=… wheel sink=…`
+- **wheel while the menu is open does not zoom the camera** (default on, Settings → Menu). Three layers, because the first one alone is not enough in every game:
+  1. the wheel is sunk at the highest action priority — this only helps in games whose camera listens to the action system, and SCP:RP does not;
+  2. the zoom range itself: while the menu is open, `CameraMinZoomDistance` and `CameraMaxZoomDistance` are pinned to the distance the camera had, which is what the camera module clamps its zoom to (camera collision keeps working, it shortens the camera without changing the zoom value);
+  3. a guard that does not care where the zoom is stored: on a wheel tick with the menu open, the camera distance from the previous frame is restored in the render step that runs *after* the camera, keeping the look direction. Only wheel ticks are corrected, so normal camera movement and collision are untouched.
+  The binding and the pin exist only while the menu is open, so with it closed nothing of ours is in the path. The Debug tab shows `menu open`, `wheel sink`, `zoom pin` and `zoom blocked` (how often the guard corrected)
 - save / load / delete config
 - presets: three slots (`scp_aim_esp_slot1.json` ...) with save/load buttons and "auto-load this slot at start"; the working config is loaded at start and remembers the slot
 - live server info (players, ping, FPS, server uptime, job id)

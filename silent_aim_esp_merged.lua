@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.6 (2026-09-30)"
+local BUILD = "v3.7 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -681,6 +681,7 @@ end
 local isStaffMember      -- section [10d]
 local setRemoveFog       -- section [10e]
 local flyStep            -- section [10e], called from the bound render step
+local zoomGuardStep      -- section [12], called from the bound render step
 
 --=====================================================================
 -- [7] CONFIG
@@ -1901,6 +1902,7 @@ pcall(function()
         cameraAssistStep(dt)
         autoFireStep()
         if flyStep then flyStep() end
+        if zoomGuardStep then zoomGuardStep() end
     end)
 end)
 
@@ -3083,8 +3085,81 @@ local function setWheelSink(on: boolean)
     end
 end
 
+local function menuOpen(): boolean
+    return UI.gui ~= nil and UI.gui.Enabled == true
+end
+
 local function updateWheelSink()
-    setWheelSink(Config.Menu.BlockCameraZoom and UI.gui ~= nil and UI.gui.Enabled == true)
+    setWheelSink(Config.Menu.BlockCameraZoom and menuOpen())
+end
+
+-- Last resort that works no matter how the game stores its zoom: remember the
+-- camera distance, and if a wheel tick happens while the menu is open, put the
+-- camera back to the distance it had before that tick. Only wheel ticks are
+-- corrected, so collision and normal camera movement stay untouched.
+local ZoomGuard = { distance = nil, restoreTo = nil, blocked = 0 }
+
+local function zoomGuardArm()
+    if Config.Menu.BlockCameraZoom and menuOpen() and ZoomGuard.distance then
+        ZoomGuard.restoreTo = ZoomGuard.distance
+    end
+end
+
+zoomGuardStep = function()
+    local cam = currentCam()
+    local focus = cam.Focus.Position
+    local offset = cam.CFrame.Position - focus
+    local distance = offset.Magnitude
+    if distance < 0.01 then return end
+
+    local want = ZoomGuard.restoreTo
+    ZoomGuard.restoreTo = nil
+    if want and math.abs(distance - want) > 0.01 then
+        local newPos = focus + offset.Unit * want
+        cam.CFrame = CFrame.lookAt(newPos, newPos + cam.CFrame.LookVector)
+        distance = want
+        ZoomGuard.blocked += 1
+    end
+    ZoomGuard.distance = distance
+end
+
+-- Sinking the wheel only helps in games whose camera listens to the action
+-- system; SCP:RP does not. So the zoom is also pinned where it is actually
+-- stored: while the menu is open, min and max zoom distance are set to the
+-- distance the camera had when it opened. The camera module clamps its zoom to
+-- that range every frame, so the wheel cannot move it - and camera collision
+-- keeps working, because that shortens the camera without changing the zoom.
+local ZoomPin = { active = false, min = nil, max = nil, distance = nil }
+
+local function updateZoomPin()
+    local want = Config.Menu.BlockCameraZoom and menuOpen()
+    if not want then
+        if ZoomPin.active then
+            ZoomPin.active = false
+            pcall(function()
+                plr.CameraMinZoomDistance = ZoomPin.min
+                plr.CameraMaxZoomDistance = ZoomPin.max
+            end)
+        end
+        return
+    end
+
+    local cam = currentCam()
+    if not ZoomPin.active then
+        ZoomPin.min = plr.CameraMinZoomDistance
+        ZoomPin.max = plr.CameraMaxZoomDistance
+        ZoomPin.distance = (cam.CFrame.Position - cam.Focus.Position).Magnitude
+        ZoomPin.active = true
+    end
+
+    local pin = ZoomPin.distance
+    if type(ZoomPin.max) == "number" then pin = math.min(pin, ZoomPin.max) end
+    if type(ZoomPin.min) == "number" then pin = math.max(pin, ZoomPin.min) end
+
+    pcall(function()
+        plr.CameraMaxZoomDistance = pin
+        plr.CameraMinZoomDistance = pin
+    end)
 end
 local function ensureAimVisuals()
     if State.fovFrame then return end
@@ -3196,9 +3271,11 @@ local function updateDebugTab()
                 tostring(hookfunction ~= nil), tostring(getsenv ~= nil),
                 tostring(AIM_DEBUG.controller), tostring(AIM_DEBUG.bulletHit), tostring(AIM_DEBUG.uiLoaded)
             )
-            labels.calls.Text = ("getTarget: calls=%d  with target=%d  |  menu open=%s  wheel sink=%s"):format(
+            labels.calls.Text = ("getTarget: calls=%d  with target=%d  |  menu open=%s  wheel sink=%s  zoom pin=%s  zoom blocked=%d"):format(
                 AIM_DEBUG.calls, AIM_DEBUG.hits,
-                tostring(UI.gui ~= nil and UI.gui.Enabled == true), tostring(wheelBound)
+                tostring(menuOpen()), tostring(wheelBound),
+                ZoomPin.active and ("%.1f"):format(ZoomPin.distance or 0) or "off",
+                ZoomGuard.blocked
             )
             labels.last.Text = "Last target: " .. AIM_DEBUG.lastTarget
             local parts = {}
@@ -3253,6 +3330,7 @@ keepConnection(RunService.RenderStepped:Connect(function()
     -- binds the wheel block while the menu is open and releases it when it
     -- closes; a no-op unless that state actually changed
     updateWheelSink()
+    updateZoomPin()
     if frameCounter % 20 == 0 then
         pcall(function()
             Stats.ping = getPing()
@@ -3382,6 +3460,13 @@ keepConnection(UIS.InputBegan:Connect(function(input, processed)
     end
 end))
 
+-- a wheel tick while the menu is open arms the zoom guard for this frame
+keepConnection(UIS.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseWheel then
+        zoomGuardArm()
+    end
+end))
+
 keepConnection(UIS.InputEnded:Connect(function(input)
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if input.KeyCode == Config.Keybinds.AimToggle then
@@ -3459,6 +3544,13 @@ do
         pcall(function()
             ContextActionService:UnbindAction("ScpMenuWheel")
         end)
+        if ZoomPin.active then
+            ZoomPin.active = false
+            pcall(function()
+                plr.CameraMinZoomDistance = ZoomPin.min
+                plr.CameraMaxZoomDistance = ZoomPin.max
+            end)
+        end
         if UI.gui then UI.gui:Destroy() end
         if State.visualsGui then State.visualsGui:Destroy() end
         UI.gui = nil
