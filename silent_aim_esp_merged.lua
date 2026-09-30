@@ -1335,7 +1335,7 @@ notifyHolder = new("Frame", {
     Size = UDim2.new(0, 262, 0, 400),
     Position = UDim2.new(1, -278, 0, 60),
     BackgroundTransparency = 1,
-}, {})
+})
 list(notifyHolder, 6)
 
 -- Load the config and install the aim BEFORE the menu is built, so that
