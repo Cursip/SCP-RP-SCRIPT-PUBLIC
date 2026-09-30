@@ -66,6 +66,7 @@ To rebind: click the key button on the right of a switch, then press the new key
 **Settings**
 - menu visible, UI scale
 - save / load / delete config
+- presets: three slots (`scp_aim_esp_slot1.json` ...) with save/load buttons and "auto-load this slot at start"; the working config is loaded at start and remembers the slot
 - live server info (players, ping, FPS, server uptime, job id)
 - re-centre menu, unload (removes menu, FOV ring, ESP and toasts, restores the aim hook, turns noclip/fullbright off)
 

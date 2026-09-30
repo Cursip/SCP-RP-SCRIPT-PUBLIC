@@ -94,16 +94,18 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.5 (2026-09-30)"
+local BUILD = "v2.6 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
 --=====================================================================
 local notifyHolder
+local SuppressToasts = false   -- set while a config/preset is being applied
 
 local function toast(text: string, color: Color3?)
     local accentColor = color or Color3.fromRGB(88, 166, 255)
     print("[menu] " .. text)
+    if SuppressToasts then return end
     if not notifyHolder or not notifyHolder.Parent then return end
 
     local frame = Instance.new("Frame")
@@ -601,44 +603,41 @@ local function healthColor(frac: number): Color3
     return bad:Lerp(mid, frac * 2)
 end
 
--- 2D bounding box of a character (nil if it cannot be projected sanely).
--- Corners at or behind the near plane project to extreme coordinates, which
--- used to produce screen-high boxes and healthbars, so they are skipped and
--- the result is clamped to the viewport.
-local function projectBox(model: Model)
-    local cam = currentCam()
-    local ok, cf, size = pcall(function()
-        local boxCf, boxSize = model:GetBoundingBox()
-        return boxCf, boxSize
-    end)
-    if not ok or typeof(cf) ~= "CFrame" then return nil end
-
-    local viewW, viewH = cam.ViewportSize.X, cam.ViewportSize.Y
-    local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
-    local corners = 0
-    for _, sx in ipairs({ -0.5, 0.5 }) do
-        for _, sy in ipairs({ -0.5, 0.5 }) do
-            for _, sz in ipairs({ -0.5, 0.5 }) do
-                local world = cf * Vector3.new(sx * size.X, sy * size.Y, sz * size.Z)
-                local sp, onScreen = cam:WorldToViewportPoint(world)
-                if sp.Z > 1 and (onScreen or sp.Z > 0) then
-                    corners += 1
-                    minX = math.min(minX, sp.X)
-                    minY = math.min(minY, sp.Y)
-                    maxX = math.max(maxX, sp.X)
-                    maxY = math.max(maxY, sp.Y)
-                end
-            end
-        end
+-- 2D box of a character, built from two projected points: the top of the head
+-- and the feet. GetBoundingBox() was used before, but it includes tools and
+-- accessories, which produced broken (huge or offset) boxes for some players.
+local function projectPoint(world: Vector3): Vector2?
+    -- only Z decides whether the point is usable: a point that is merely
+    -- off-screen still projects to sane coordinates (the box is capped below)
+    local sp = currentCam():WorldToViewportPoint(world)
+    if sp.Z > 1 then
+        return Vector2.new(sp.X, sp.Y)
     end
+    return nil
+end
 
-    if corners < 2 then return nil end
-    minX = math.max(minX, -viewW * 0.25)
-    maxX = math.min(maxX, viewW * 1.25)
-    minY = math.max(minY, -viewH * 0.25)
-    maxY = math.min(maxY, viewH * 1.25)
-    if maxX - minX < 2 or maxY - minY < 6 then return nil end
-    return minX, minY, maxX, maxY
+local function projectBox(model: Model)
+    local head = model:FindFirstChild("Head")
+    local hrp = model:FindFirstChild("HumanoidRootPart")
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not (head and hrp and hum) then return nil end
+
+    -- R15 reports HipHeight; R6 usually reports 0, then a fixed guess is fine
+    local hipHeight = hum.HipHeight > 0 and hum.HipHeight or 2.5
+    local topPoint = projectPoint(head.Position + Vector3.new(0, head.Size.Y * 0.5, 0))
+    local bottomPoint = projectPoint(hrp.Position - Vector3.new(0, hrp.Size.Y * 0.5 + hipHeight, 0))
+    if not (topPoint and bottomPoint) then return nil end
+
+    local viewW, viewH = currentCam().ViewportSize.X, currentCam().ViewportSize.Y
+    -- cap the size: a player standing right at the camera would otherwise draw
+    -- a box and healthbar larger than the screen
+    local height = math.min(math.abs(bottomPoint.Y - topPoint.Y), viewH * 0.75)
+    if height < 6 then return nil end
+
+    local width = math.clamp(height * 0.55, 4, viewW * 0.5)
+    local centreX = (topPoint.X + bottomPoint.X) * 0.5
+    local minY = math.min(topPoint.Y, bottomPoint.Y)
+    return centreX - width * 0.5, minY, centreX + width * 0.5, minY + height
 end
 
 --=====================================================================
@@ -726,6 +725,10 @@ local Config = {
         ShowRole = true,
         DimIgnored = true,
     },
+    Profile = {
+        Slot = "Slot 1",
+        AutoLoad = false,
+    },
     Keybinds = {
         MenuToggle = Enum.KeyCode.K,
         AimToggle = Enum.KeyCode.RightShift,
@@ -797,7 +800,11 @@ local function deserialize(value)
     return out
 end
 
-local function saveConfig()
+-- filled in section [10b]; loadConfig applies it after merging a file
+local applyAllFeatures
+
+local function saveConfig(file: string?)
+    file = file or CONFIG_FILE
     if typeof(writefile) ~= "function" then
         toast("Executor has no file API (writefile)", Theme.danger)
         return
@@ -809,25 +816,26 @@ local function saveConfig()
         toast("Save failed: " .. tostring(encoded), Theme.danger)
         return
     end
-    local wrote = pcall(writefile, CONFIG_FILE, encoded)
+    local wrote = pcall(writefile, file, encoded)
     if wrote then
-        toast("Config saved: " .. CONFIG_FILE, Theme.success)
+        toast("Config saved: " .. file, Theme.success)
     else
         toast("Write failed", Theme.danger)
     end
 end
 
-local function loadConfig(silent: boolean?)
+local function loadConfig(silent: boolean?, file: string?)
+    file = file or CONFIG_FILE
     if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
         if not silent then toast("Executor has no file API (readfile)", Theme.danger) end
         return false
     end
-    local checked, exists = pcall(isfile, CONFIG_FILE)
+    local checked, exists = pcall(isfile, file)
     if not checked or not exists then
-        if not silent then toast("No config found", Theme.danger) end
+        if not silent then toast("No config found: " .. file, Theme.danger) end
         return false
     end
-    local ok, content = pcall(readfile, CONFIG_FILE)
+    local ok, content = pcall(readfile, file)
     if not ok or type(content) ~= "string" then
         if not silent then toast("Config not readable", Theme.danger) end
         return false
@@ -847,8 +855,25 @@ local function loadConfig(silent: boolean?)
         end
     end
     UI:RefreshAll()
-    if not silent then toast("Config loaded", Theme.success) end
+    if applyAllFeatures then applyAllFeatures(true) end
+    if not silent then toast("Config loaded: " .. file, Theme.success) end
     return true
+end
+
+-- Presets are just extra config files (scp_aim_esp_slot1.json, ...). The
+-- working config remembers which slot to load automatically at start.
+local function profileFile(): string
+    local slot = tostring((Config.Profile and Config.Profile.Slot) or "Slot 1")
+    local slug = string.gsub(slot, "%s+", "")
+    return "scp_aim_esp_" .. string.lower(slug) .. ".json"
+end
+
+local function saveProfile()
+    saveConfig(profileFile())
+end
+
+local function loadProfile(silent: boolean?)
+    return loadConfig(silent, profileFile())
 end
 
 --=====================================================================
@@ -1292,7 +1317,9 @@ local function updateESP()
 
                 -- must be a multiple assignment: projectBox returns four values
                 local minX, minY, maxX, maxY = projectBox(char)
-                if minX then
+                -- a box smaller than this means the player is far away; the
+                -- labels would only pile up at the horizon
+                if minX and (maxY - minY) >= 16 then
                     local w, h = maxX - minX, maxY - minY
 
                     objects.box.Visible = cfg.Box
@@ -1678,6 +1705,25 @@ end
 
 local statsLabels = nil
 
+-- Applies everything that has a side effect. Used at start and after a config
+-- or preset is loaded, so a loaded file takes effect immediately.
+applyAllFeatures = function(quiet: boolean?)
+    SuppressToasts = quiet == true
+    local ok, err = pcall(function()
+        syncAimGlobals()
+        setNoclip(Config.Player.Noclip)
+        setFullbright(Config.Player.Fullbright)
+        setFpsBoost(Config.Utility.FpsBoost)
+        if Config.Aim.Enabled and not State.hookInstalled then
+            installHook()
+        end
+    end)
+    SuppressToasts = false
+    if not ok then
+        warn("[menu] applying settings failed: " .. tostring(err))
+    end
+end
+
 local function updateStatsLabels()
     if not statsLabels then return end
     statsLabels.players.Text = ("Players: %d"):format(#Players:GetPlayers())
@@ -1715,6 +1761,11 @@ list(notifyHolder, 6)
 pcall(function()
     loadConfig(true)
 end)
+if Config.Profile.AutoLoad then
+    pcall(function()
+        loadProfile(true)
+    end)
+end
 syncAimGlobals()
 if Config.Aim.Enabled and not State.hookInstalled then
     local ok, reason = pcall(installHook)
@@ -2357,6 +2408,13 @@ local menuOk, menuErr = pcall(function()
         end })
         m:Slider({ text = "UI scale", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
             onChanged = function(value) window:SetScale(value) end })
+
+        local pr = settingsTab:Section("Presets")
+        pr:Dropdown({ text = "Slot", path = "Profile.Slot", options = { "Slot 1", "Slot 2", "Slot 3" } })
+        pr:Toggle({ text = "Auto-load this slot at start", path = "Profile.AutoLoad" })
+        pr:Button({ text = "Save current settings to slot", callback = saveProfile })
+        pr:Button({ text = "Load slot", callback = function() loadProfile(false) end })
+        pr:Label("Presets are extra config files (scp_aim_esp_slot1.json ...). The working config below is loaded at start and remembers which slot to auto-load.")
 
         local c = settingsTab:Section("Config")
         c:Label("Saves all options to " .. CONFIG_FILE .. " (requires writefile).")
