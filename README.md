@@ -14,16 +14,16 @@ Eine Datei, die zwei Dinge kombiniert:
 Im Executor ausführen — lädt immer die aktuelle Version aus diesem Repo:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/OWNER/REPO/main/loader.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-PUBLIC/main/loader.lua"))()
 ```
 
 Alternativ direkt `silent_aim_esp_merged.lua` laden (Datei oder raw-URL):
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/OWNER/REPO/main/silent_aim_esp_merged.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-PUBLIC/main/silent_aim_esp_merged.lua"))()
 ```
 
-`OWNER/REPO` durch deinen GitHub-Namen und das Repository ersetzen.
+Repo: **[Cursip/SCP-RP-SCRIPT-PUBLIC](https://github.com/Cursip/SCP-RP-SCRIPT-PUBLIC)** (öffentlich — nötig, damit die raw-URL im Executor ohne Token ladbar ist).
 
 ## Flags (Abschnitt `[2]`)
 
