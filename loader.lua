@@ -1,4 +1,4 @@
--- loader.lua — stabiler Einstiegspunkt: laedt immer die aktuelle Version
+-- loader.lua - stabiler Einstiegspunkt: laedt immer die aktuelle Version
 -- aus diesem Repository. Im Executor einfach diese Datei ausfuehren:
 --   loadstring(game:HttpGet("https://raw.githubusercontent.com/OWNER/REPO/main/loader.lua"))()
 -- OWNER/REPO unten eintragen.

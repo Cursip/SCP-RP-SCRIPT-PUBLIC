@@ -1,0 +1,4 @@
+# Lua-Dateien werden per raw-URL geladen -> immer LF, nie CRLF, kein BOM
+* text=auto eol=lf
+*.lua text eol=lf
+*.luau text eol=lf
