@@ -1,21 +1,35 @@
 --!nonstrict
 --[[=====================================================================
-  MERGED SCRIPT
-    [2] Silent-aim config        -> the getgenv() flags
-    [5] Silent aim               -> contents of SCP_Roleplay/main.luau
-                                    (target finder + aim UI + the hook)
-    [6] DeepHat Player-Only ESP  -> Highlight + toggle button
-    [7] Status panel             -> DEBUG_AIM = false removes it
+  SCP: Roleplay - Silent Aim + Player ESP + Mod Menu
+  =====================================================================
 
-  The decisive difference to the earlier merge: main.luau's LAST block is
-  included here - the hookfunction() on the Controller's BulletHit. That
-  hook is what redirects your shots onto the target. Without it the FOV
-  circle and the tracers still appear (they come from UIs/silent_aim.luau)
-  while every bullet keeps flying exactly where you aimed.
+  Aufbau
+    [0] Boot / Executor-Kompatibilitaet
+    [1] Services
+    [2] Flags
+    [3] Notifications (Toasts + Konsole)
+    [4] UI-Library (Fenster, Tabs, Toggle, Slider, Dropdown, Farbe)
+    [5] Hilfsfunktionen (Sichtbarkeit, Bounding-Box, Zeichnen)
+    [6] State
+    [7] Config (Defaults) + Speichern/Laden
+    [8] Silent Aim (Zielsuche + BulletHit-Hook)   <- das, was wirklich trifft
+    [9] ESP (Highlight + Box + Name + Distanz + Healthbar)
+   [10] Extra-Features (Noclip, Fullbright)
+   [11] Menue-Aufbau
+   [12] Render- und Input-Loops
+   [13] Start / Unload
 
-  Remote fetches: UIs/silent_aim.luau (the aim GUI) and optionally the
-  author's live main.luau. NOTIFICATION_LIBRARY and Teams.luau are not
-  fetched (see the flags in [2]).
+  Neues Feature hinzufuegen (Vorlage: Noclip in [10]):
+    1. Default ergaenzen:   Config.Player.MeinFeature = false
+    2. Funktion schreiben:  local function setMeinFeature(on) ... end
+    3. Toggle binden (in [11]):
+         local s = playerTab:Section("Mein Bereich")
+         s:Toggle{
+             text = "Mein Feature", path = "Player.MeinFeature",
+             keybind = "MeinFeature", defaultKey = Enum.KeyCode.X,   -- optional
+             onChanged = function(v) setMeinFeature(v) end,
+         }
+    Speichern/Laden und Keybind laufen automatisch mit.
 =====================================================================]]
 
 --=====================================================================
@@ -29,56 +43,823 @@ local newcclosure = newcclosure or clonefunction
 local executor = identifyexecutor and identifyexecutor() or "Your executor"
 
 --=====================================================================
--- [1] SERVICES / LOCALS
+-- [1] SERVICES / KLEINE HELFER
 --=====================================================================
-local RS: ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local Players: Players = cloneref(game:GetService("Players"))
 local RunService: RunService = cloneref(game:GetService("RunService"))
 local UIS: UserInputService = cloneref(game:GetService("UserInputService"))
+local TweenService = cloneref(game:GetService("TweenService"))
+local HttpService = cloneref(game:GetService("HttpService"))
+local Lighting = cloneref(game:GetService("Lighting"))
 
 local plr = Players.LocalPlayer
-local cam = workspace.CurrentCamera
-local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled and not UIS.MouseEnabled
+local startedAt = os.clock()
+
+local function currentCam()
+    return workspace.CurrentCamera
+end
+
+local function isMobile()
+    return UIS.TouchEnabled and not UIS.KeyboardEnabled and not UIS.MouseEnabled
+end
+
+local function guiParent()
+    if gethui then
+        local ok, hui = pcall(gethui)
+        if ok and typeof(hui) == "Instance" then return hui end
+    end
+    return game:GetService("CoreGui")
+end
 
 --=====================================================================
--- [2] CONFIG
+-- [2] FLAGS
 --=====================================================================
-getgenv().sneeky_silent_aim = true
-getgenv().sneeky_fov_size = 300
-
--- true  = download the author's newest SCP_Roleplay/main.luau and run that
---         instead of the inlined copy (safer after a game update)
--- false = run the inlined copy, i.e. the file you sent
+-- true  = Author-Build (SCP_Roleplay/main.luau) frisch laden statt der
+--         eingebauten Kopie. Nach einem Spielupdate die sicherere Variante.
 local PREFER_REMOTE_BUILD = false
 local SILENT_AIM_URL = "https://sneekysscripts.uk/Scripts/SCP_Roleplay/main.luau"
+
+-- true  = zusaetzlich die Fremd-UI des Authors (eigener FOV-Kreis/Tracer)
+--         laden. Standard false, weil das eigene Menue das selbst zeichnet.
+local USE_AUTHOR_AIM_UI = false
 local SILENT_AIM_UI_URL = "https://sneekysscripts.uk/Scripts/UIs/silent_aim.luau"
 
--- true  = also fetch Teams.luau, the author's team-alias table. That is what
---         the original main.luau uses, and it groups teams that only differ
---         by name/instance but are the same side.
--- false = plain Team comparison (your earlier choice)
+-- true  = Teams.luau (Alias-Tabelle des Authors) mitladen
 local FETCH_TEAM_ALIASES = false
 
--- Status panel in section [7]
+-- Debug-Tab im Menue anzeigen
 local DEBUG_AIM = true
 
---=====================================================================
--- [3] ERROR REPORTING  (notification-library fetch removed)
---=====================================================================
-local function notifyError(msg: string)
-    return warn(msg)
-end
-
-local function notifySuccess(msg: string)
-    return print(msg)
-end
+local CONFIG_FILE = "scp_aim_esp_config.json"
 
 --=====================================================================
--- [4] TEAM CHECK
---     teamlessIsSame keeps the two original behaviours apart: main.luau's
---     aim treats players without a Team as enemies, script #3's ESP read
---     nil == nil as "same side" and hid them.
+-- [3] NOTIFICATIONS
 --=====================================================================
+local notifyHolder
+
+local function toast(text: string, color: Color3?)
+    local accentColor = color or Color3.fromRGB(88, 166, 255)
+    print("[menu] " .. text)
+    if not notifyHolder or not notifyHolder.Parent then return end
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(258, 34)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+    frame.BackgroundTransparency = 1
+    frame.BorderSizePixel = 0
+    frame.Parent = notifyHolder
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 7)
+    c.Parent = frame
+
+    local s = Instance.new("UIStroke")
+    s.Color = accentColor
+    s.Transparency = 1
+    s.Parent = frame
+
+    local accent = Instance.new("Frame")
+    accent.Size = UDim2.new(0, 3, 1, -8)
+    accent.Position = UDim2.fromOffset(4, 4)
+    accent.BackgroundColor3 = accentColor
+    accent.BorderSizePixel = 0
+    accent.Parent = frame
+    local ac = Instance.new("UICorner")
+    ac.CornerRadius = UDim.new(1, 0)
+    ac.Parent = accent
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -22, 1, 0)
+    label.Position = UDim2.fromOffset(16, 0)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = Color3.fromRGB(232, 236, 242)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextWrapped = true
+    label.TextTransparency = 1
+    label.Text = tostring(text)
+    label.Parent = frame
+
+    TweenService:Create(frame, TweenInfo.new(0.18), { BackgroundTransparency = 0.1 }):Play()
+    TweenService:Create(label, TweenInfo.new(0.18), { TextTransparency = 0 }):Play()
+    TweenService:Create(s, TweenInfo.new(0.18), { Transparency = 0.35 }):Play()
+
+    task.delay(4, function()
+        if not frame.Parent then return end
+        TweenService:Create(frame, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+        TweenService:Create(label, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
+        TweenService:Create(s, TweenInfo.new(0.25), { Transparency = 1 }):Play()
+        task.wait(0.3)
+        frame:Destroy()
+    end)
+end
+
+--=====================================================================
+-- [4] UI-LIBRARY
+--=====================================================================
+local Theme = {
+    window = Color3.fromRGB(15, 17, 21),
+    sidebar = Color3.fromRGB(11, 13, 16),
+    panel = Color3.fromRGB(19, 22, 27),
+    element = Color3.fromRGB(27, 30, 37),
+    elementHover = Color3.fromRGB(35, 39, 47),
+    text = Color3.fromRGB(233, 237, 243),
+    dim = Color3.fromRGB(138, 146, 158),
+    accent = Color3.fromRGB(88, 166, 255),
+    success = Color3.fromRGB(84, 205, 130),
+    danger = Color3.fromRGB(236, 96, 96),
+    stroke = Color3.fromRGB(43, 47, 57),
+}
+
+local function new(class: string, props: { [string]: any }?, children: { Instance }?)
+    local inst = Instance.new(class)
+    if props then
+        for k, v in pairs(props) do
+            inst[k] = v
+        end
+    end
+    if children then
+        for _, child in ipairs(children) do
+            child.Parent = inst
+        end
+    end
+    return inst
+end
+
+local function corner(parent: Instance, radius: number)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent: Instance, color: Color3, thickness: number?, transparency: number?)
+    local s = Instance.new("UIStroke")
+    s.Color = color
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.Parent = parent
+    return s
+end
+
+local function pad(parent: Instance, px: number)
+    local p = Instance.new("UIPadding")
+    p.PaddingTop = UDim.new(0, px)
+    p.PaddingBottom = UDim.new(0, px)
+    p.PaddingLeft = UDim.new(0, px)
+    p.PaddingRight = UDim.new(0, px)
+    p.Parent = parent
+    return p
+end
+
+local function list(parent: Instance, gap: number)
+    local l = Instance.new("UIListLayout")
+    l.Padding = UDim.new(0, gap)
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Parent = parent
+    return l
+end
+
+local function hover(inst: GuiObject, from: Color3, to: Color3)
+    inst.MouseEnter:Connect(function()
+        TweenService:Create(inst, TweenInfo.new(0.12), { BackgroundColor3 = to }):Play()
+    end)
+    inst.MouseLeave:Connect(function()
+        TweenService:Create(inst, TweenInfo.new(0.12), { BackgroundColor3 = from }):Play()
+    end)
+end
+
+local UI = {
+    gui = nil,
+    window = nil,
+    binders = nil,      -- wird in [11] gefuellt
+    promptBind = nil,   -- Element, das auf einen Tastendruck wartet
+    refreshers = {},    -- liest Config und aktualisiert die Optik
+}
+
+function UI:RefreshAll()
+    for _, fn in ipairs(self.refreshers) do
+        pcall(fn)
+    end
+end
+
+function UI:Window(spec)
+    local screen = new("ScreenGui", {
+        Name = "SCP_Menu",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        DisplayOrder = 100,
+    })
+    screen.Parent = guiParent()
+    self.gui = screen
+
+    local scale = Instance.new("UIScale")
+    scale.Parent = screen
+
+    local size = spec.size or UDim2.fromOffset(680, 450)
+    local win = new("Frame", {
+        Name = "Window",
+        Size = size,
+        Position = spec.position or UDim2.fromOffset(70, 110),
+        BackgroundColor3 = Theme.window,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+    }, { screen })
+    corner(win, 10)
+    stroke(win, Theme.stroke, 1, 0.25)
+
+    -- ------------------------------------------------------ Titelleiste
+    local bar = new("Frame", {
+        Name = "TitleBar",
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundColor3 = Color3.fromRGB(18, 20, 25),
+        BorderSizePixel = 0,
+    }, { win })
+    new("Frame", {
+        Size = UDim2.new(1, 0, 0, 1),
+        Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = Theme.stroke,
+        BorderSizePixel = 0,
+    }, { bar })
+
+    new("TextLabel", {
+        Size = UDim2.new(0, 320, 1, 0),
+        Position = UDim2.fromOffset(14, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = (spec.title or "Menu") .. (spec.version and ("   " .. spec.version) or ""),
+    }, { bar })
+
+    local statusLabel = new("TextLabel", {
+        Size = UDim2.new(0, 260, 1, 0),
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -92, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextColor3 = Theme.dim,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = spec.subtitle or "",
+    }, { bar })
+
+    local collapseBtn = new("TextButton", {
+        Size = UDim2.fromOffset(26, 26),
+        Position = UDim2.new(1, -64, 0, 6),
+        BackgroundColor3 = Theme.element,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Theme.dim,
+        Text = "-",
+        AutoButtonColor = false,
+        ZIndex = 3,
+    }, { bar })
+    corner(collapseBtn, 6)
+    hover(collapseBtn, Theme.element, Theme.elementHover)
+
+    local hideBtn = new("TextButton", {
+        Size = UDim2.fromOffset(26, 26),
+        Position = UDim2.new(1, -34, 0, 6),
+        BackgroundColor3 = Theme.element,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = Theme.dim,
+        Text = "x",
+        AutoButtonColor = false,
+        ZIndex = 3,
+    }, { bar })
+    corner(hideBtn, 6)
+    hover(hideBtn, Theme.element, Theme.danger)
+
+    -- ---------------------------------------------------- Sidebar/Inhalt
+    local body = new("Frame", {
+        Size = UDim2.new(1, 0, 1, -38),
+        Position = UDim2.fromOffset(0, 38),
+        BackgroundTransparency = 1,
+    }, { win })
+
+    local sidebar = new("Frame", {
+        Size = UDim2.new(0, 158, 1, 0),
+        BackgroundColor3 = Theme.sidebar,
+        BorderSizePixel = 0,
+    }, { body })
+    local sidebarPad = Instance.new("UIPadding")
+    sidebarPad.PaddingTop = UDim.new(0, 10)
+    sidebarPad.PaddingLeft = UDim.new(0, 10)
+    sidebarPad.PaddingRight = UDim.new(0, 10)
+    sidebarPad.Parent = sidebar
+    list(sidebar, 4)
+
+    local content = new("Frame", {
+        Size = UDim2.new(1, -158, 1, 0),
+        Position = UDim2.fromOffset(158, 0),
+        BackgroundTransparency = 1,
+    }, { body })
+
+    local window = {
+        gui = screen,
+        frame = win,
+        scale = scale,
+        status = statusLabel,
+        tabs = {},
+        collapsed = false,
+    }
+
+    -- Ziehen an der Titelleiste
+    local dragging, dragStart, startPos = false, nil, nil
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = win.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    collapseBtn.MouseButton1Click:Connect(function()
+        window.collapsed = not window.collapsed
+        body.Visible = not window.collapsed
+        win.Size = window.collapsed and UDim2.new(size.X.Scale, size.X.Offset, 0, 38) or size
+        collapseBtn.Text = window.collapsed and "+" or "-"
+    end)
+
+    hideBtn.MouseButton1Click:Connect(function()
+        screen.Enabled = false
+        toast("Menue versteckt - Taste " .. tostring(Config.Keybinds.MenuToggle.Name) .. " zeigt es wieder", Theme.accent)
+    end)
+
+    function window:SetScale(value: number)
+        scale.Scale = value
+    end
+
+    function window:SetStatus(text: string)
+        statusLabel.Text = text
+    end
+
+    function window:Tab(name: string)
+        local button = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 32),
+            BackgroundColor3 = Theme.element,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 12,
+            TextColor3 = Theme.dim,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = "  " .. name,
+            AutoButtonColor = false,
+        }, { sidebar })
+        corner(button, 6)
+
+        local page = new("ScrollingFrame", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ScrollBarThickness = 3,
+            ScrollBarImageColor3 = Theme.stroke,
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            Visible = false,
+        }, { content })
+        local pagePad = Instance.new("UIPadding")
+        pagePad.PaddingTop = UDim.new(0, 12)
+        pagePad.PaddingBottom = UDim.new(0, 16)
+        pagePad.PaddingLeft = UDim.new(0, 14)
+        pagePad.PaddingRight = UDim.new(0, 14)
+        pagePad.Parent = page
+        local layout = list(page, 8)
+
+        local tab = { page = page, button = button, order = 0, layout = layout }
+
+        button.MouseButton1Click:Connect(function()
+            for _, other in pairs(window.tabs) do
+                other.page.Visible = false
+                TweenService:Create(other.button, TweenInfo.new(0.12), { BackgroundTransparency = 1, TextColor3 = Theme.dim }):Play()
+            end
+            page.Visible = true
+            TweenService:Create(button, TweenInfo.new(0.12), { BackgroundTransparency = 0.15, TextColor3 = Theme.text }):Play()
+        end)
+
+        table.insert(window.tabs, tab)
+        if #window.tabs == 1 then
+            page.Visible = true
+            button.BackgroundTransparency = 0.15
+            button.TextColor3 = Theme.text
+        end
+
+        function tab:Section(title: string)
+            return UI:Section(self, title)
+        end
+
+        return tab
+    end
+
+    return window
+end
+
+function UI:Section(tab, title: string)
+    local order = tab.order
+    tab.order += 2
+
+    new("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        TextColor3 = Theme.accent,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = string.upper(title),
+        LayoutOrder = order,
+    }, { tab.page })
+
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        LayoutOrder = order + 1,
+    }, { tab.page })
+    list(holder, 6)
+
+    local section = { holder = holder, index = 0 }
+
+    function section:next()
+        self.index += 1
+        return self.index
+    end
+
+    function section:Label(text: string, color: Color3?)
+        return new("TextLabel", {
+            Size = UDim2.new(1, 0, 0, 16),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextColor3 = color or Theme.dim,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextWrapped = true,
+            Text = text,
+            LayoutOrder = self:next(),
+        }, { self.holder })
+    end
+
+    function section:Button(spec)
+        local b = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 30),
+            BackgroundColor3 = Theme.element,
+            BorderSizePixel = 0,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 12,
+            TextColor3 = spec.color or Theme.text,
+            Text = spec.text,
+            AutoButtonColor = false,
+            LayoutOrder = self:next(),
+        }, { self.holder })
+        corner(b, 7)
+        stroke(b, Theme.stroke, 1, 0.5)
+        hover(b, Theme.element, Theme.elementHover)
+        b.MouseButton1Click:Connect(function()
+            local ok, err = pcall(spec.callback)
+            if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+        end)
+        return b
+    end
+
+    -- Toggle/Slider/Dropdown/Farbe kommen aus [11] (brauchen Config)
+    function section:Toggle(spec) return UI.binders.Toggle(self, spec) end
+    function section:Slider(spec) return UI.binders.Slider(self, spec) end
+    function section:Dropdown(spec) return UI.binders.Dropdown(self, spec) end
+    function section:Color(spec) return UI.binders.Color(self, spec) end
+
+    return section
+end
+
+--=====================================================================
+-- [5] HILFSFUNKTIONEN
+--=====================================================================
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
+
+local function refreshRayFilter()
+    local filter: { Instance } = {}
+    local char = plr.Character
+    if char then table.insert(filter, char) end
+    local pathMods = workspace:FindFirstChild("RoleplayPathMods")
+    local gunIgnore = workspace:FindFirstChild("Gun_Ignore")
+    if pathMods then table.insert(filter, pathMods) end
+    if gunIgnore then table.insert(filter, gunIgnore) end
+    rayParams.FilterDescendantsInstances = filter
+end
+
+local function isVisiblePart(part: BasePart?, origin: Vector3): (boolean, BasePart?)
+    if not part then return false, nil end
+    refreshRayFilter()
+    local result = workspace:Raycast(origin, part.Position - origin, rayParams)
+    if not result then return true, nil end
+    if result.Instance:IsDescendantOf(part.Parent) then
+        return true, result.Instance :: any
+    end
+    return false, result.Instance :: any
+end
+
+local function mousePoint(): Vector2
+    if isMobile() then
+        local cam = currentCam()
+        return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    end
+    return UIS:GetMouseLocation()
+end
+
+local function healthColor(frac: number): Color3
+    local bad = Color3.fromRGB(236, 96, 96)
+    local mid = Color3.fromRGB(236, 196, 96)
+    local good = Color3.fromRGB(84, 205, 130)
+    frac = math.clamp(frac, 0, 1)
+    if frac >= 0.5 then
+        return mid:Lerp(good, (frac - 0.5) * 2)
+    end
+    return bad:Lerp(mid, frac * 2)
+end
+
+-- 2D-Bounding-Box eines Charakters (nil, wenn nicht darstellbar)
+local function projectBox(model: Model)
+    local cam = currentCam()
+    local ok, cf, size = pcall(function()
+        local boxCf, boxSize = model:GetBoundingBox()
+        return boxCf, boxSize
+    end)
+    if not ok or typeof(cf) ~= "CFrame" then return nil end
+
+    local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+    local visible = false
+    for _, sx in ipairs({ -0.5, 0.5 }) do
+        for _, sy in ipairs({ -0.5, 0.5 }) do
+            for _, sz in ipairs({ -0.5, 0.5 }) do
+                local world = cf * Vector3.new(sx * size.X, sy * size.Y, sz * size.Z)
+                local sp, onScreen = cam:WorldToViewportPoint(world)
+                if onScreen or sp.Z > 0 then
+                    visible = true
+                    minX = math.min(minX, sp.X)
+                    minY = math.min(minY, sp.Y)
+                    maxX = math.max(maxX, sp.X)
+                    maxY = math.max(maxY, sp.Y)
+                end
+            end
+        end
+    end
+    if not visible or maxX <= minX or maxY <= minY then return nil end
+    return minX, minY, maxX, maxY
+end
+
+local function drawLine(frame: Frame, from: Vector2, to: Vector2, thickness: number)
+    local delta = to - from
+    local length = delta.Magnitude
+    if length <= 1 then
+        frame.Visible = false
+        return
+    end
+    frame.Visible = true
+    frame.AnchorPoint = Vector2.new(0, 0.5)
+    frame.Size = UDim2.fromOffset(math.floor(length), math.max(1, math.floor(thickness)))
+    frame.Position = UDim2.fromOffset(math.floor(from.X), math.floor(from.Y))
+    frame.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+end
+
+--=====================================================================
+-- [6] STATE
+--=====================================================================
+local State = {
+    bulletHit = nil,
+    hookOriginal = nil,
+    hookInstalled = false,
+    aimKeyDown = false,
+    espObjects = {},
+    espGui = nil,
+    fovFrame = nil,
+    fovStroke = nil,
+    tracerFrame = nil,
+    infoLabel = nil,
+    connections = {},
+    unloaded = false,
+}
+
+local function keepConnection(conn)
+    table.insert(State.connections, conn)
+    return conn
+end
+
+--=====================================================================
+-- [7] CONFIG
+--=====================================================================
+local Config = {
+    Menu = {
+        Visible = true,
+        Scale = 1,
+    },
+    Aim = {
+        Enabled = true,
+        HoldToAim = false,
+        FOV = 300,
+        ShowFOV = true,
+        FOVColor = Color3.fromRGB(88, 166, 255),
+        TeamCheck = true,
+        VisibleOnly = true,
+        TargetPart = "Head",
+        IgnoreForcefield = true,
+        MaxDistance = 0,
+        Tracers = true,
+        TracerColor = Color3.fromRGB(88, 166, 255),
+        TracerThickness = 2,
+        TargetInfo = true,
+        InfoColor = Color3.fromRGB(240, 240, 240),
+    },
+    ESP = {
+        Enabled = false,
+        TeamCheck = true,
+        VisibleOnly = false,
+        MaxDistance = 0,
+        Highlight = true,
+        ColorMode = "Team",
+        FillColor = Color3.fromRGB(255, 60, 60),
+        FillTransparency = 0.45,
+        OutlineColor = Color3.fromRGB(0, 0, 0),
+        OutlineTransparency = 0,
+        AlwaysOnTop = true,
+        Box = true,
+        BoxThickness = 1,
+        BoxTransparency = 0.2,
+        Name = true,
+        NameColor = Color3.fromRGB(240, 240, 240),
+        NameSize = 13,
+        Distance = true,
+        DistanceColor = Color3.fromRGB(200, 205, 215),
+        DistanceSize = 12,
+        HealthBar = true,
+        HealthBarWidth = 3,
+    },
+    Player = {
+        Noclip = false,
+        Fullbright = false,
+    },
+    Keybinds = {
+        MenuToggle = Enum.KeyCode.K,
+        AimToggle = Enum.KeyCode.RightShift,
+        ESPToggle = Enum.KeyCode.V,
+        Noclip = Enum.KeyCode.N,
+        Fullbright = Enum.KeyCode.B,
+    },
+}
+
+local function getPath(path: string)
+    local node = Config
+    for part in string.gmatch(path, "[^%.]+") do
+        node = node[part]
+        if node == nil then return nil end
+    end
+    return node
+end
+
+local function setPath(path: string, value: any)
+    local parts = {}
+    for part in string.gmatch(path, "[^%.]+") do table.insert(parts, part) end
+    if #parts == 0 then return end
+    local node = Config
+    for i = 1, #parts - 1 do
+        node = node[parts[i]]
+        if node == nil then return end
+    end
+    node[parts[#parts]] = value
+end
+
+local function serialize(value)
+    local kind = type(value)
+    if kind == "number" or kind == "string" or kind == "boolean" then return value end
+    if typeof(value) == "Color3" then
+        return { __color = { math.floor(value.R * 255 + 0.5), math.floor(value.G * 255 + 0.5), math.floor(value.B * 255 + 0.5) } }
+    end
+    if typeof(value) == "EnumItem" then
+        return { __enum = tostring(value) }
+    end
+    if kind == "table" then
+        local out = {}
+        for k, v in pairs(value) do
+            local encoded = serialize(v)
+            if encoded ~= nil then out[k] = encoded end
+        end
+        return out
+    end
+    return nil
+end
+
+local function deserialize(value)
+    if type(value) ~= "table" then return value end
+    if value.__color then
+        return Color3.fromRGB(value.__color[1], value.__color[2], value.__color[3])
+    end
+    if value.__enum then
+        local enumType, enumName = string.match(value.__enum, "Enum%.([^%.]+)%.(.+)")
+        if enumType and enumName and Enum[enumType] then
+            local item = Enum[enumType][enumName]
+            if item then return item end
+        end
+        return nil
+    end
+    local out = {}
+    for k, v in pairs(value) do
+        out[k] = deserialize(v)
+    end
+    return out
+end
+
+local function saveConfig()
+    if typeof(writefile) ~= "function" then
+        toast("Executor hat keine Datei-API (writefile)", Theme.danger)
+        return
+    end
+    local ok, encoded = pcall(function()
+        return HttpService:JSONEncode(serialize(Config))
+    end)
+    if not ok then
+        toast("Speichern fehlgeschlagen: " .. tostring(encoded), Theme.danger)
+        return
+    end
+    local wrote = pcall(writefile, CONFIG_FILE, encoded)
+    if wrote then
+        toast("Config gespeichert: " .. CONFIG_FILE, Theme.success)
+    else
+        toast("Schreiben fehlgeschlagen", Theme.danger)
+    end
+end
+
+local function loadConfig(silent: boolean?)
+    if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
+        if not silent then toast("Executor hat keine Datei-API (readfile)", Theme.danger) end
+        return false
+    end
+    local checked, exists = pcall(isfile, CONFIG_FILE)
+    if not checked or not exists then
+        if not silent then toast("Keine Config gefunden", Theme.danger) end
+        return false
+    end
+    local ok, content = pcall(readfile, CONFIG_FILE)
+    if not ok or type(content) ~= "string" then
+        if not silent then toast("Config nicht lesbar", Theme.danger) end
+        return false
+    end
+    local decodedOk, decoded = pcall(function()
+        return deserialize(HttpService:JSONDecode(content))
+    end)
+    if not decodedOk or type(decoded) ~= "table" then
+        if not silent then toast("Config ist beschaedigt", Theme.danger) end
+        return false
+    end
+    for group, values in pairs(decoded) do
+        if type(Config[group]) == "table" and type(values) == "table" then
+            for key, value in pairs(values) do
+                if value ~= nil then Config[group][key] = value end
+            end
+        end
+    end
+    UI:RefreshAll()
+    if not silent then toast("Config geladen", Theme.success) end
+    return true
+end
+
+--=====================================================================
+-- [8] SILENT AIM
+--=====================================================================
+local AIM_DEBUG = {
+    mode = "noch nicht gestartet",
+    hook = "nicht installiert",
+    calls = 0,
+    hits = 0,
+    lastTarget = "-",
+    reasons = {},
+    controller = false,
+    bulletHit = false,
+    uiLoaded = false,
+}
+
+local function dbgReason(reason: string)
+    AIM_DEBUG.reasons[reason] = (AIM_DEBUG.reasons[reason] or 0) + 1
+end
+
 local teamAliases = nil
 if FETCH_TEAM_ALIASES then
     local ok, res = pcall(function()
@@ -87,11 +868,11 @@ if FETCH_TEAM_ALIASES then
     if ok and type(res) == "table" then
         teamAliases = res
     else
-        warn("[merged] Teams.luau unavailable, using plain Team comparison")
+        warn("[menu] Teams.luau nicht verfuegbar, nutze direkten Team-Vergleich")
     end
 end
 
-local isSameTeam = function(player: Player, teamlessIsSame: boolean): boolean
+local function isSameTeam(player: Player?, teamlessIsSame: boolean): boolean
     if not player or player == plr then return true end
     if player.Team and player.Team == plr.Team then return true end
     if teamAliases and player.Team and plr.Team then
@@ -102,391 +883,1421 @@ local isSameTeam = function(player: Player, teamlessIsSame: boolean): boolean
     return false
 end
 
---=====================================================================
--- [5] SILENT AIM  (contents of SCP_Roleplay/main.luau)
---=====================================================================
-local AIM_DEBUG = {
-    mode = "not started",
-    hook = "not installed",
-    calls = 0, hits = 0, lastTarget = "-",
-    reasons = {},
-    controller = false, bulletHit = false, uiLoaded = false,
-}
-local function dbgReason(reason: string)
-    AIM_DEBUG.reasons[reason] = (AIM_DEBUG.reasons[reason] or 0) + 1
-end
-
-local getTarget
-
-do
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    rp.IgnoreWater = true
-
-    local isVisible = function(part: BasePart, origin: Vector3): (boolean, Instance?)
-        local char = plr.Character
-        if not (char and part) then return false, nil end
-
-        -- built without nil holes; the original passed possibly-nil folders in
-        local filter: { Instance } = { char }
-        local pathMods = workspace:FindFirstChild("RoleplayPathMods")
-        local gunIgnore = workspace:FindFirstChild("Gun_Ignore")
-        if pathMods then table.insert(filter, pathMods) end
-        if gunIgnore then table.insert(filter, gunIgnore) end
-        rp.FilterDescendantsInstances = filter
-
-        local result: RaycastResult = workspace:Raycast(origin, part.Position - origin, rp)
-        if not result then return true, nil end
-
-        if result.Instance:IsDescendantOf(part.Parent) then
-            return true, result.Instance
-        end
-
-        return false, result.Instance
+local function pickTargetPart(char: Model, origin: Vector3): BasePart?
+    local mode = Config.Aim.TargetPart
+    if mode == "HumanoidRootPart" then
+        return char:FindFirstChild("HumanoidRootPart") :: any
     end
-
-    getTarget = function(origin: Vector3?)
-        if not getgenv().sneeky_silent_aim then return nil end
-        AIM_DEBUG.calls += 1
-
-        -- the hook passes the camera position; a nil origin would make
-        -- `part.Position - origin` throw and silently kill every call
-        origin = origin or (plr.Character and plr.Character:GetPivot().Position) or cam.CFrame.Position
-
-        local cPart, cPlayer, cDistance = nil, nil, getgenv().sneeky_fov_size or 300
-
-        for _, player: Player in next, Players:GetPlayers() do
-            if player == plr then continue end
-            if isSameTeam(player, false) then dbgReason("team"); continue end
-
-            local char = player.Character
-            if not char then dbgReason("nochar"); continue end
-            if char:FindFirstChildOfClass("ForceField") then dbgReason("forcefield"); continue end
-            if char:FindFirstChild("Humanoid") and char.Humanoid.Health <= 0 then dbgReason("dead"); continue end
-
-            local tPart: BasePart = char:FindFirstChild("Head") or char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-            if not tPart then dbgReason("nopart"); continue end
-
-            local pos, onScreen = cam:WorldToViewportPoint(tPart.Position)
-            if not onScreen then dbgReason("offscreen"); continue end
-
-            local v, nTPart = isVisible(tPart, origin)
-            if not v then
-                v, nTPart = isVisible(char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"), origin)
-                if not v then dbgReason("blocked"); continue end
-            end
-
-            if nTPart then tPart = nTPart end
-
-            local distance = (Vector2.new(pos.X, pos.Y) - (isMobile and Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2) or UIS:GetMouseLocation())).Magnitude
-            if distance < cDistance then
-                cPart = tPart
-                cPlayer = player
-                cDistance = distance
-                dbgReason("accepted")
-            else
-                dbgReason("outoffov")
-            end
-        end
-
-        if cPart then
-            AIM_DEBUG.hits += 1
-            AIM_DEBUG.lastTarget = ("%s (%s, %.0fpx)"):format(cPlayer.Name, cPart.Name, cDistance)
-        end
-        return cPart
-    end
-
-    -- The inlined build: exactly what SCP_Roleplay/main.luau does, including
-    -- the BulletHit hook at the end that makes the shots actually connect.
-    local runInlineBuild = function(): (boolean, string)
-        if not (hookfunction and getsenv) then
-            return false, executor .. " is missing " .. (not hookfunction and "hookfunction " or "") .. (not getsenv and "getsenv" or "")
-        end
-
-        local controller = plr.PlayerScripts:FindFirstChild("Controller")
-        if not controller then return false, "Script needs updating" end
-        AIM_DEBUG.controller = true
-
-        -- the author walks getsenv(controller).BulletHit until it exists
-        local bulletHit
-        for _ = 1, 50 do
-            local env = select(2, pcall(getsenv, controller))
-            if type(env) == "table" and env.BulletHit then
-                bulletHit = env.BulletHit
-                break
-            end
-            task.wait()
-        end
-        if not bulletHit then return false, "Failed to retrieve function" end
-        AIM_DEBUG.bulletHit = true
-
-        -- 1) the aim GUI (FOV circle + tracers)
-        local uiOk, uiErr = pcall(function()
-            loadstring(game:HttpGet(SILENT_AIM_UI_URL))()(getgenv().sneeky_fov_size or 300, getTarget, true)
-        end)
-        if uiOk then
-            AIM_DEBUG.uiLoaded = true
-        else
-            warn("[merged] silent aim UI failed to load: " .. tostring(uiErr))
-        end
-
-        -- 2) the aim itself: replace the hit data handed to BulletHit.
-        --    old(self, hitData, ...) -> old(self, fakedHitData, ...)
-        local hookOk, hookErr = pcall(function()
-            local old
-            old = clonefunction(hookfunction(bulletHit, newcclosure(function(_, hitData, ...)
-                -- camera can be swapped on respawn, so read it per call
-                local origin = (workspace.CurrentCamera or cam).CFrame.Position
-                local c = getTarget(origin)
-                if c then
-                    return old(_, {
-                        ["Instance"] = c,
-                        ["Position"] = c.Position,
-                        ["Normal"] = Vector3.new(0, 1, 0),
-                        ["Material"] = c.Material,
-                    }, ...)
+    if mode == "Nearest" then
+        local best, bestDist = nil, math.huge
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("BasePart") then
+                local dist = (child.Position - origin).Magnitude
+                if dist < bestDist then
+                    best, bestDist = child, dist
                 end
-                return old(_, hitData, ...)
-            end)))
-            AIM_DEBUG.hook = old ~= nil and "installed on Controller.BulletHit" or "hookfunction returned nothing"
-        end)
-        if not hookOk then
-            AIM_DEBUG.hook = "failed: " .. tostring(hookErr)
-            return false, "hookfunction failed: " .. tostring(hookErr)
-        end
-        if AIM_DEBUG.hook ~= "installed on Controller.BulletHit" then
-            return false, AIM_DEBUG.hook
-        end
-
-        return true, "inlined main.luau (hook installed)"
-    end
-
-    local initSilentAim = function()
-        if PREFER_REMOTE_BUILD then
-            local ok, err = pcall(function()
-                loadstring(game:HttpGet(SILENT_AIM_URL))()
-            end)
-            if ok then
-                AIM_DEBUG.mode = "main.luau (author build, remote)"
-                AIM_DEBUG.hook = "handled by the author build"
-                return
             end
-            warn("[merged] " .. SILENT_AIM_URL .. " failed: " .. tostring(err) .. " - falling back to the inlined copy")
         end
+        return best
+    end
+    return (char:FindFirstChild("Head") or char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")) :: any
+end
 
-        local ok, reason = runInlineBuild()
+-- Liefert das Ziel-Part oder nil. forVisual = nur Anzeige (zaehlt nicht in
+-- die Statistik und ignoriert "nur solange Taste gehalten").
+local function findTarget(origin: Vector3?, forVisual: boolean?)
+    local cfg = Config.Aim
+    if not cfg.Enabled then return nil end
+    if cfg.HoldToAim and not forVisual and not State.aimKeyDown then return nil end
+    if not forVisual then AIM_DEBUG.calls += 1 end
+
+    local cam = currentCam()
+    origin = origin or (plr.Character and plr.Character:GetPivot().Position) or cam.CFrame.Position
+
+    local best, bestPlayer, bestDist = nil, nil, cfg.FOV
+
+    for _, player: Player in next, Players:GetPlayers() do
+        if player ~= plr then
+            if cfg.TeamCheck and isSameTeam(player, false) then
+                dbgReason("team")
+            else
+                local char = player.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not (char and hum) then
+                    dbgReason("kein Char")
+                elseif hum.Health <= 0 then
+                    dbgReason("tot")
+                elseif cfg.IgnoreForcefield and char:FindFirstChildOfClass("ForceField") then
+                    dbgReason("forcefield")
+                else
+                    local part = pickTargetPart(char, origin)
+                    local hrp = char:FindFirstChild("HumanoidRootPart") or part
+                    local dist3 = hrp and (cam.CFrame.Position - hrp.Position).Magnitude or 0
+                    if not part then
+                        dbgReason("kein Part")
+                    elseif cfg.MaxDistance > 0 and dist3 > cfg.MaxDistance then
+                        dbgReason("zu weit")
+                    else
+                        local pos, onScreen = cam:WorldToViewportPoint(part.Position)
+                        if not onScreen then
+                            dbgReason("offscreen")
+                        else
+                            local visible, hitPart = true, nil
+                            if cfg.VisibleOnly then
+                                visible, hitPart = isVisiblePart(part, origin)
+                                if not visible then
+                                    local alt = char:FindFirstChild("HumanoidRootPart")
+                                    if alt and alt ~= part then
+                                        visible, hitPart = isVisiblePart(alt, origin)
+                                    end
+                                end
+                            end
+                            if cfg.VisibleOnly and not visible then
+                                dbgReason("blockiert")
+                            else
+                                if hitPart then part = hitPart end
+                                local px = (Vector2.new(pos.X, pos.Y) - mousePoint()).Magnitude
+                                if px < bestDist then
+                                    best, bestPlayer, bestDist = part, player, px
+                                    dbgReason("akzeptiert")
+                                else
+                                    dbgReason("ausserhalb FOV")
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if best then
+        AIM_DEBUG.hits += 1
+        AIM_DEBUG.lastTarget = ("%s (%s, %.0fpx)"):format(bestPlayer.Name, best.Name, bestDist)
+    end
+    return best
+end
+
+local function syncAimGlobals()
+    getgenv().sneeky_silent_aim = Config.Aim.Enabled
+    getgenv().sneeky_fov_size = Config.Aim.FOV
+end
+
+-- Hook auf Controller.BulletHit: ersetzt die Trefferdaten durch das Ziel.
+-- Ohne diesen Hook malt die UI nur Tracer, getroffen wird nichts.
+local function installHook(): (boolean, string)
+    AIM_DEBUG.hook = "nicht installiert"
+
+    if PREFER_REMOTE_BUILD then
+        local ok = pcall(function()
+            loadstring(game:HttpGet(SILENT_AIM_URL))()
+        end)
         if ok then
-            AIM_DEBUG.mode = reason
-        else
-            AIM_DEBUG.mode = "FAILED - " .. reason
-            notifyError("Silent aim did not load: " .. reason)
+            AIM_DEBUG.mode = "main.luau (Author-Build, remote)"
+            AIM_DEBUG.hook = "vom Author-Build verwaltet"
+            return true, AIM_DEBUG.hook
+        end
+        warn("[menu] " .. SILENT_AIM_URL .. " fehlgeschlagen, nutze eingebauten Code")
+    end
+    AIM_DEBUG.mode = "eingebaut (main.luau-Code + eigenes Menue)"
+
+    local controller = plr.PlayerScripts:FindFirstChild("Controller")
+    if not (hookfunction and getsenv and controller) then
+        AIM_DEBUG.hook = "hookfunction/getsenv/Controller fehlt"
+        return false, AIM_DEBUG.hook
+    end
+    AIM_DEBUG.controller = true
+
+    local bulletHit
+    for _ = 1, 50 do
+        local env = select(2, pcall(getsenv, controller))
+        if type(env) == "table" and env.BulletHit then
+            bulletHit = env.BulletHit
+            break
+        end
+        task.wait()
+    end
+    if not bulletHit then
+        AIM_DEBUG.hook = "Controller.BulletHit nicht gefunden"
+        return false, AIM_DEBUG.hook
+    end
+    AIM_DEBUG.bulletHit = true
+    State.bulletHit = bulletHit
+
+    if USE_AUTHOR_AIM_UI then
+        AIM_DEBUG.uiLoaded = pcall(function()
+            loadstring(game:HttpGet(SILENT_AIM_UI_URL))()(Config.Aim.FOV, findTarget, true)
+        end)
+    end
+
+    local ok, err = pcall(function()
+        local old
+        old = clonefunction(hookfunction(bulletHit, newcclosure(function(_, hitData, ...)
+            local target = findTarget(currentCam().CFrame.Position)
+            if target then
+                return old(_, {
+                    ["Instance"] = target,
+                    ["Position"] = target.Position,
+                    ["Normal"] = Vector3.new(0, 1, 0),
+                    ["Material"] = target.Material,
+                }, ...)
+            end
+            return old(_, hitData, ...)
+        end)))
+        State.hookOriginal = old
+        State.hookInstalled = old ~= nil
+    end)
+
+    if not ok or not State.hookInstalled then
+        AIM_DEBUG.hook = "fehlgeschlagen: " .. tostring(err or "hookfunction lieferte nichts")
+        return false, AIM_DEBUG.hook
+    end
+
+    AIM_DEBUG.hook = "installiert auf Controller.BulletHit"
+    return true, AIM_DEBUG.hook
+end
+
+--=====================================================================
+-- [9] ESP
+--=====================================================================
+local function espColor(p: Player, char: Model): Color3
+    local cfg = Config.ESP
+    if cfg.ColorMode == "Team" and p.Team then
+        return p.Team.TeamColor.Color
+    elseif cfg.ColorMode == "Health" then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.MaxHealth > 0 then
+            return healthColor(hum.Health / hum.MaxHealth)
+        end
+    elseif cfg.ColorMode == "Distance" then
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local dist = (currentCam().CFrame.Position - hrp.Position).Magnitude
+            return healthColor(1 - dist / 300)
         end
     end
+    return cfg.FillColor
+end
 
-    local ok, res = pcall(initSilentAim)
-    if not ok then
-        AIM_DEBUG.mode = "FAILED - init error: " .. tostring(res)
-        warn("[merged] silent aim init error, ESP will still run: " .. tostring(res))
+local function createESPObjects(p: Player)
+    local cfg = Config.ESP
+    local parent = State.espGui or UI.gui
+    local objects = {}
+
+    local hl = Instance.new("Highlight")
+    hl.Name = "esp_hl_" .. p.UserId
+    hl.FillTransparency = cfg.FillTransparency
+    hl.OutlineTransparency = cfg.OutlineTransparency
+    hl.OutlineColor = cfg.OutlineColor
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = parent
+    objects.highlight = hl
+
+    local box = new("Frame", {
+        Name = "esp_box_" .. p.UserId,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Visible = false,
+    }, { parent })
+    objects.box = box
+    objects.boxStroke = stroke(box, Color3.new(1, 1, 1), cfg.BoxThickness, cfg.BoxTransparency)
+
+    objects.name = new("TextLabel", {
+        Name = "esp_name_" .. p.UserId,
+        Size = UDim2.new(0, 200, 0, 16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = cfg.NameSize,
+        TextColor3 = cfg.NameColor,
+        TextStrokeTransparency = 0.4,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        Text = p.Name,
+        Visible = false,
+    }, { parent })
+
+    objects.dist = new("TextLabel", {
+        Name = "esp_dist_" .. p.UserId,
+        Size = UDim2.new(0, 200, 0, 14),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = cfg.DistanceSize,
+        TextColor3 = cfg.DistanceColor,
+        TextStrokeTransparency = 0.4,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        Text = "",
+        Visible = false,
+    }, { parent })
+
+    local hpBg = new("Frame", {
+        Name = "esp_hpbg_" .. p.UserId,
+        BackgroundColor3 = Color3.fromRGB(15, 15, 15),
+        BackgroundTransparency = 0.35,
+        BorderSizePixel = 0,
+        Visible = false,
+    }, { parent })
+    corner(hpBg, 2)
+    local hpFill = new("Frame", {
+        Name = "esp_hp_" .. p.UserId,
+        Size = UDim2.new(1, 0, 1, 0),
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = Theme.success,
+        BorderSizePixel = 0,
+    }, { hpBg })
+    corner(hpFill, 2)
+    objects.hpBg = hpBg
+    objects.hpFill = hpFill
+
+    return objects
+end
+
+local function destroyESPObjects(p: Player)
+    local objects = State.espObjects[p]
+    if not objects then return end
+    for _, inst in pairs(objects) do
+        if typeof(inst) == "Instance" then
+            inst:Destroy()
+        end
     end
+    State.espObjects[p] = nil
+end
 
-    if AIM_DEBUG.mode:find("inlined") then
-        notifySuccess("Silent aim loaded (inlined main.luau, hook " .. AIM_DEBUG.hook .. ")")
+local function clearESP()
+    for p in pairs(State.espObjects) do
+        destroyESPObjects(p)
     end
 end
 
---=====================================================================
--- [6] PLAYER-ONLY ESP  (was script #3)
---=====================================================================
-local Settings = {
-    color = Color3.fromRGB(255, 50, 50),
-    outline = Color3.fromRGB(0, 0, 0),
-    team_check = true,
-    enabled = false, -- master switch
-    gui_visible = true,
-}
-
-local target_container
-do
-    local ok, res = pcall(function() return gethui and gethui() end)
-    target_container = (ok and res) or game:GetService("CoreGui")
-end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "DeepHat_Player_ESP"
-ScreenGui.Parent = target_container
-
-local MainButton = Instance.new("TextButton")
-MainButton.Size = UDim2.new(0, 150, 0, 50)
-MainButton.Position = UDim2.new(0.5, -75, 0.1, 0)
-MainButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-MainButton.Text = "ESP: OFF"
-MainButton.TextColor3 = Color3.new(1, 1, 1)
-MainButton.Font = Enum.Font.SourceSansBold
-MainButton.TextSize = 20
-MainButton.BorderSizePixel = 2
-MainButton.Parent = ScreenGui
-MainButton.Active = true
-MainButton.Draggable = true
-
-local tagFor = function(v: Player): string
-    return "hx_p_" .. v.UserId
-end
-
-local clearESP = function(v: Player?)
-    if v then
-        local existing = target_container:FindFirstChild(tagFor(v))
-        if existing then existing:Destroy() end
+local function updateESP()
+    local cfg = Config.ESP
+    if not cfg.Enabled then
+        if next(State.espObjects) then clearESP() end
         return
     end
-    for _, p in pairs(Players:GetPlayers()) do
-        local existing = target_container:FindFirstChild(tagFor(p))
-        if existing then existing:Destroy() end
-    end
-end
 
-MainButton.MouseButton1Click:Connect(function()
-    Settings.enabled = not Settings.enabled
+    local cam = currentCam()
+    for _, p in next, Players:GetPlayers() do
+        if p ~= plr then
+            local char = p.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-    if Settings.enabled then
-        MainButton.Text = "ESP: ON"
-        MainButton.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-    else
-        MainButton.Text = "ESP: OFF"
-        MainButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        clearESP() -- aggressive cleanup: wipe all ESP tags
-    end
-end)
-
--- hide interface with K
-UIS.InputBegan:Connect(function(input, processed)
-    if not processed and input.KeyCode == Enum.KeyCode.K then
-        Settings.gui_visible = not Settings.gui_visible
-        ScreenGui.Enabled = Settings.gui_visible
-    end
-end)
-
-local get_color = function(v: Player): Color3
-    if Settings.team_check and not isSameTeam(v, true) and v.Team then
-        return v.Team.TeamColor.Color
-    end
-    return Settings.color
-end
-
-local apply_esp = function(v: Player)
-    if not v:IsA("Player") or v == plr then return end
-    if not v.Character or not v.Character:FindFirstChild("HumanoidRootPart") then return end
-    if Settings.team_check and isSameTeam(v, true) then return end
-
-    local tag = tagFor(v)
-    if target_container:FindFirstChild(tag) then return end
-
-    local h = Instance.new("Highlight")
-    h.Name = tag
-    h.Adornee = v.Character
-    h.FillColor = get_color(v)
-    h.OutlineColor = Settings.outline
-    h.FillTransparency = 0.45
-    h.OutlineTransparency = 0
-    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    h.Parent = target_container
-end
-
-RunService.RenderStepped:Connect(function()
-    if not Settings.enabled then return end
-
-    for _, v in pairs(Players:GetPlayers()) do
-        if v ~= plr then
-            local existing = target_container:FindFirstChild(tagFor(v))
-            local shouldShow = v.Character
-                and v.Character:FindFirstChild("HumanoidRootPart") ~= nil
-                and not (Settings.team_check and isSameTeam(v, true))
-
-            if shouldShow then
-                if not existing then
-                    apply_esp(v)
-                else
-                    existing.FillColor = get_color(v) -- team / settings may have changed
+            local show, dist = false, 0
+            if char and hum and hrp and hum.Health > 0 then
+                dist = (cam.CFrame.Position - hrp.Position).Magnitude
+                if not (cfg.TeamCheck and isSameTeam(p, true)) then
+                    if cfg.MaxDistance <= 0 or dist <= cfg.MaxDistance then
+                        if cfg.VisibleOnly then
+                            show = isVisiblePart(char:FindFirstChild("Head") or hrp, cam.CFrame.Position)
+                        else
+                            show = true
+                        end
+                    end
                 end
-            elseif existing then
-                existing:Destroy()
+            end
+
+            if show then
+                local objects = State.espObjects[p]
+                if not objects then
+                    objects = createESPObjects(p)
+                    State.espObjects[p] = objects
+                end
+
+                local color = espColor(p, char)
+
+                objects.highlight.Enabled = cfg.Highlight
+                objects.highlight.Adornee = char
+                objects.highlight.FillColor = color
+                objects.highlight.FillTransparency = cfg.FillTransparency
+                objects.highlight.OutlineColor = cfg.OutlineColor
+                objects.highlight.OutlineTransparency = cfg.OutlineTransparency
+                objects.highlight.DepthMode = cfg.AlwaysOnTop and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+
+                local box = projectBox(char)
+                if box then
+                    local minX, minY, maxX, maxY = box
+                    local w, h = maxX - minX, maxY - minY
+
+                    objects.box.Visible = cfg.Box
+                    objects.box.Position = UDim2.fromOffset(math.floor(minX), math.floor(minY))
+                    objects.box.Size = UDim2.fromOffset(math.max(1, math.floor(w)), math.max(1, math.floor(h)))
+                    objects.boxStroke.Color = color
+                    objects.boxStroke.Thickness = cfg.BoxThickness
+                    objects.boxStroke.Transparency = cfg.BoxTransparency
+
+                    objects.name.Visible = cfg.Name
+                    objects.name.Position = UDim2.fromOffset(math.floor(minX + w / 2 - 100), math.floor(minY - 16))
+                    objects.name.Text = p.Name
+                    objects.name.TextColor3 = cfg.NameColor
+                    objects.name.TextSize = cfg.NameSize
+
+                    objects.dist.Visible = cfg.Distance
+                    objects.dist.Position = UDim2.fromOffset(math.floor(minX + w / 2 - 100), math.floor(maxY + 2))
+                    objects.dist.Text = ("%d studs"):format(math.floor(dist))
+                    objects.dist.TextColor3 = cfg.DistanceColor
+                    objects.dist.TextSize = cfg.DistanceSize
+
+                    if cfg.HealthBar and hum and hum.MaxHealth > 0 then
+                        local frac = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                        objects.hpBg.Visible = true
+                        objects.hpBg.Size = UDim2.fromOffset(cfg.HealthBarWidth, math.max(1, math.floor(h)))
+                        objects.hpBg.Position = UDim2.fromOffset(math.floor(minX - cfg.HealthBarWidth - 3), math.floor(minY))
+                        objects.hpFill.Size = UDim2.new(1, 0, frac, 0)
+                        objects.hpFill.BackgroundColor3 = healthColor(frac)
+                    else
+                        objects.hpBg.Visible = false
+                    end
+                else
+                    objects.box.Visible = false
+                    objects.name.Visible = false
+                    objects.dist.Visible = false
+                    objects.hpBg.Visible = false
+                end
+            elseif State.espObjects[p] then
+                destroyESPObjects(p)
             end
         end
     end
-end)
-
--- cleanup when a player leaves
-Players.PlayerRemoving:Connect(clearESP)
+end
 
 --=====================================================================
--- [7] STATUS PANEL  (DEBUG_AIM = false removes all of this)
---     Line 2 = which silent-aim build is running, line 3 = is the hook in.
---     The counters only move while getTarget() is being called.
+-- [10] EXTRA-FEATURES  (Vorlage fuer neue Features)
 --=====================================================================
-if DEBUG_AIM then
-    local dbgGui = Instance.new("ScreenGui")
-    dbgGui.Name = "SilentAim_Debug"
-    dbgGui.ResetOnSpawn = false
-    dbgGui.Parent = target_container
+local Noclip = { saved = nil }
 
-    local panel = Instance.new("TextLabel")
-    panel.Size = UDim2.new(0, 560, 0, 330)
-    panel.Position = UDim2.new(0, 8, 0, 8)
-    panel.BackgroundColor3 = Color3.new(0, 0, 0)
-    panel.BackgroundTransparency = 0.3
-    panel.TextColor3 = Color3.fromRGB(90, 255, 140)
-    panel.TextXAlignment = Enum.TextXAlignment.Left
-    panel.TextYAlignment = Enum.TextYAlignment.Top
-    panel.Font = Enum.Font.Code
-    panel.TextSize = 13
-    panel.Text = "collecting..."
-    panel.Active = true
-    panel.Draggable = true
-    panel.Parent = dbgGui
+local function noclipApply()
+    local char = plr.Character
+    if not char then return end
+    Noclip.saved = Noclip.saved or {}
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") and d.CanCollide then
+            Noclip.saved[d] = true
+            d.CanCollide = false
+        end
+    end
+end
 
-    -- F3 hides the panel if it is in the way
-    UIS.InputBegan:Connect(function(input, processed)
-        if not processed and input.KeyCode == Enum.KeyCode.F3 then
-            dbgGui.Enabled = not dbgGui.Enabled
+local function setNoclip(on: boolean)
+    if on then
+        noclipApply()
+        toast("Noclip AN (kann vom Anti-Cheat erkannt werden)", Theme.success)
+    else
+        if Noclip.saved then
+            for part in pairs(Noclip.saved) do
+                if typeof(part) == "Instance" and part.Parent then
+                    part.CanCollide = true
+                end
+            end
+        end
+        Noclip.saved = nil
+        toast("Noclip AUS", Theme.dim)
+    end
+end
+
+local Fullbright = { saved = nil }
+
+local function setFullbright(on: boolean)
+    if on then
+        if not Fullbright.saved then
+            Fullbright.saved = {
+                Brightness = Lighting.Brightness,
+                ClockTime = Lighting.ClockTime,
+                Ambient = Lighting.Ambient,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+                GlobalShadows = Lighting.GlobalShadows,
+                FogEnd = Lighting.FogEnd,
+                ExposureCompensation = Lighting.ExposureCompensation,
+            }
+        end
+        Lighting.Brightness = 3
+        Lighting.ClockTime = 14
+        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+        Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 100000
+        toast("Fullbright AN", Theme.success)
+    else
+        if Fullbright.saved then
+            for key, value in pairs(Fullbright.saved) do
+                Lighting[key] = value
+            end
+        end
+        Fullbright.saved = nil
+        toast("Fullbright AUS", Theme.dim)
+    end
+end
+
+--=====================================================================
+-- [11] MENUE-AUFBAU
+--=====================================================================
+notifyHolder = new("Frame", {
+    Name = "Notifications",
+    Size = UDim2.new(0, 262, 0, 400),
+    Position = UDim2.new(1, -278, 0, 60),
+    BackgroundTransparency = 1,
+}, {})
+list(notifyHolder, 6)
+
+local window = UI:Window({
+    title = "SCP:RP",
+    subtitle = executor .. "  |  " .. tostring(#Players:GetPlayers()) .. " Spieler",
+    version = "v2.0",
+    size = UDim2.fromOffset(680, 450),
+    position = UDim2.fromOffset(70, 110),
+})
+notifyHolder.Parent = UI.gui
+State.espGui = UI.gui
+
+-- ------------------------------------------------------- Element-Binder
+local function bindToggle(section, spec)
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundColor3 = Theme.element,
+        BorderSizePixel = 0,
+        LayoutOrder = section:next(),
+    }, { section.holder })
+    corner(holder, 7)
+    stroke(holder, Theme.stroke, 1, 0.5)
+
+    new("TextLabel", {
+        Size = UDim2.new(1, -120, 1, 0),
+        Position = UDim2.fromOffset(12, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = spec.text,
+    }, { holder })
+
+    local pill = new("Frame", {
+        Size = UDim2.fromOffset(38, 20),
+        Position = UDim2.new(1, -50, 0.5, -10),
+        BackgroundColor3 = Theme.stroke,
+        BorderSizePixel = 0,
+    }, { holder })
+    corner(pill, 10)
+
+    local knob = new("Frame", {
+        Size = UDim2.fromOffset(16, 16),
+        Position = UDim2.fromOffset(2, 2),
+        BackgroundColor3 = Color3.fromRGB(210, 214, 220),
+        BorderSizePixel = 0,
+    }, { pill })
+    corner(knob, 8)
+
+    local keyBtn
+    if spec.keybind then
+        keyBtn = new("TextButton", {
+            Size = UDim2.fromOffset(52, 20),
+            Position = UDim2.new(1, -108, 0.5, -10),
+            BackgroundColor3 = Theme.window,
+            BorderSizePixel = 0,
+            Font = Enum.Font.Gotham,
+            TextSize = 10,
+            TextColor3 = Theme.dim,
+            Text = "-",
+            AutoButtonColor = false,
+            ZIndex = 3,
+        }, { holder })
+        corner(keyBtn, 5)
+        stroke(keyBtn, Theme.stroke, 1, 0.4)
+    end
+
+    local function draw()
+        local on = getPath(spec.path) and true or false
+        TweenService:Create(pill, TweenInfo.new(0.15), {
+            BackgroundColor3 = on and Theme.accent or Theme.stroke,
+        }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.15), {
+            Position = on and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2),
+        }):Play()
+    end
+
+    local function apply(value, fire)
+        setPath(spec.path, value)
+        draw()
+        if fire and spec.onChanged then
+            local ok, err = pcall(spec.onChanged, value)
+            if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+        end
+    end
+
+    local clickRow = new("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 1,
+    }, { holder })
+    clickRow.MouseButton1Click:Connect(function()
+        apply(not getPath(spec.path), true)
+    end)
+
+    local function refreshKey()
+        if keyBtn and spec.keybind then
+            local key = Config.Keybinds[spec.keybind]
+            keyBtn.Text = key and key.Name or "-"
+        end
+    end
+
+    if keyBtn then
+        keyBtn.MouseButton1Click:Connect(function()
+            UI.promptBind = { keybind = spec.keybind, refresh = refreshKey }
+            keyBtn.Text = "..."
+        end)
+    end
+
+    table.insert(UI.refreshers, function()
+        draw()
+        refreshKey()
+    end)
+    draw()
+    refreshKey()
+
+    local element = {}
+    function element:Set(value) apply(value, true) end
+    function element:Get() return getPath(spec.path) end
+    return element
+end
+
+local function bindSlider(section, spec)
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 42),
+        BackgroundColor3 = Theme.element,
+        BorderSizePixel = 0,
+        LayoutOrder = section:next(),
+    }, { section.holder })
+    corner(holder, 7)
+    stroke(holder, Theme.stroke, 1, 0.5)
+
+    new("TextLabel", {
+        Size = UDim2.new(0.72, 0, 0, 18),
+        Position = UDim2.fromOffset(12, 4),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = spec.text,
+    }, { holder })
+
+    local valueLabel = new("TextLabel", {
+        Size = UDim2.new(0.28, -12, 0, 18),
+        Position = UDim2.new(0.72, 0, 0, 4),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextColor3 = Theme.accent,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = "",
+    }, { holder })
+
+    local track = new("Frame", {
+        Size = UDim2.new(1, -24, 0, 8),
+        Position = UDim2.fromOffset(12, 28),
+        BackgroundColor3 = Theme.window,
+        BorderSizePixel = 0,
+        Active = true,
+    }, { holder })
+    corner(track, 4)
+
+    local fill = new("Frame", {
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = Theme.accent,
+        BorderSizePixel = 0,
+    }, { track })
+    corner(fill, 4)
+
+    local dragging = false
+    local decimals = spec.decimals or 0
+    local step = spec.step or 1
+    local span = math.max(0.0001, spec.max - spec.min)
+
+    local function formatValue(value)
+        local text
+        if decimals > 0 then
+            text = string.format("%." .. decimals .. "f", value)
+        else
+            text = tostring(math.floor(value + 0.5))
+        end
+        return text .. (spec.suffix or "")
+    end
+
+    local function draw(value)
+        local frac = math.clamp((value - spec.min) / span, 0, 1)
+        fill.Size = UDim2.new(frac, 0, 1, 0)
+        valueLabel.Text = formatValue(value)
+    end
+
+    local function commit(value, fire)
+        value = math.clamp(value, spec.min, spec.max)
+        value = math.floor(value / step + 0.5) * step
+        setPath(spec.path, value)
+        draw(value)
+        if fire and spec.onChanged then
+            local ok, err = pcall(spec.onChanged, value)
+            if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+        end
+    end
+
+    local function valueFromX(mouseX: number)
+        local frac = math.clamp((mouseX - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+        return spec.min + frac * span
+    end
+
+    track.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            commit(valueFromX(input.Position.X), true)
+        end
+    end)
+    track.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    keepConnection(UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            commit(valueFromX(input.Position.X), true)
+        end
+    end))
+
+    table.insert(UI.refreshers, function()
+        local value = getPath(spec.path)
+        if type(value) == "number" then draw(value) end
+    end)
+    local initial = getPath(spec.path)
+    if type(initial) == "number" then draw(initial) end
+
+    local element = {}
+    function element:Set(value) commit(value, true) end
+    return element
+end
+
+local function bindDropdown(section, spec)
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = Theme.element,
+        BorderSizePixel = 0,
+        LayoutOrder = section:next(),
+    }, { section.holder })
+    corner(holder, 7)
+    stroke(holder, Theme.stroke, 1, 0.5)
+
+    new("TextLabel", {
+        Size = UDim2.new(0.55, 0, 1, 0),
+        Position = UDim2.fromOffset(12, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = spec.text,
+    }, { holder })
+
+    local valueLabel = new("TextLabel", {
+        Size = UDim2.new(0.45, -12, 1, 0),
+        Position = UDim2.new(0.55, 0, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextColor3 = Theme.accent,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = "",
+    }, { holder })
+
+    local popup, backdrop
+    local function closePopup()
+        if popup then popup:Destroy(); popup = nil end
+        if backdrop then backdrop:Destroy(); backdrop = nil end
+    end
+
+    local button = new("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 2,
+    }, { holder })
+
+    button.MouseButton1Click:Connect(function()
+        if popup then
+            closePopup()
+            return
+        end
+
+        backdrop = new("TextButton", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Text = "",
+            ZIndex = 40,
+        }, { UI.gui })
+        backdrop.MouseButton1Click:Connect(closePopup)
+
+        popup = new("Frame", {
+            Size = UDim2.fromOffset(math.max(120, holder.AbsoluteSize.X), #spec.options * 24 + 8),
+            Position = UDim2.fromOffset(holder.AbsolutePosition.X, holder.AbsolutePosition.Y + holder.AbsoluteSize.Y + 4),
+            BackgroundColor3 = Theme.panel,
+            BorderSizePixel = 0,
+            ZIndex = 41,
+        }, { UI.gui })
+        corner(popup, 7)
+        stroke(popup, Theme.stroke, 1, 0.2)
+        list(popup, 2)
+        pad(popup, 4)
+
+        for _, option in ipairs(spec.options) do
+            local item = new("TextButton", {
+                Size = UDim2.new(1, 0, 0, 20),
+                BackgroundColor3 = Theme.element,
+                BorderSizePixel = 0,
+                Font = Enum.Font.Gotham,
+                TextSize = 11,
+                TextColor3 = getPath(spec.path) == option and Theme.accent or Theme.text,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Text = "  " .. tostring(option),
+                AutoButtonColor = false,
+                ZIndex = 42,
+            }, { popup })
+            corner(item, 5)
+            hover(item, Theme.element, Theme.elementHover)
+            item.MouseButton1Click:Connect(function()
+                setPath(spec.path, option)
+                valueLabel.Text = tostring(option)
+                if spec.onChanged then
+                    local ok, err = pcall(spec.onChanged, option)
+                    if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
+                end
+                closePopup()
+            end)
         end
     end)
 
-    local reasonOrder = { "team", "nochar", "forcefield", "dead", "nopart", "offscreen", "blocked", "outoffov", "accepted" }
+    local function refresh()
+        local value = getPath(spec.path)
+        valueLabel.Text = tostring(value)
+    end
+    table.insert(UI.refreshers, refresh)
+    refresh()
 
-    task.spawn(function()
-        while dbgGui.Parent do
-            local out = {
-                "===== SILENT AIM STATUS (F3 hides, draggable) =====",
-                ("build: %s"):format(AIM_DEBUG.mode),
-                ("BulletHit hook: %s"):format(AIM_DEBUG.hook),
-                ("aim flag=%s   fov=%s   executor=%s"):format(tostring(getgenv().sneeky_silent_aim), tostring(getgenv().sneeky_fov_size), executor),
-                ("hookfunction=%s   getsenv=%s   controller=%s   bulletHit=%s   ui=%s"):format(tostring(hookfunction ~= nil), tostring(getsenv ~= nil), tostring(AIM_DEBUG.controller), tostring(AIM_DEBUG.bulletHit), tostring(AIM_DEBUG.uiLoaded)),
-                ("getTarget: calls=%d   with a target=%d   last=%s"):format(AIM_DEBUG.calls, AIM_DEBUG.hits, AIM_DEBUG.lastTarget),
-                "-- outcome per checked player --",
-            }
+    local element = {}
+    function element:Set(value)
+        setPath(spec.path, value)
+        refresh()
+        if spec.onChanged then pcall(spec.onChanged, value) end
+    end
+    return element
+end
 
-            local parts = {}
-            for _, k in ipairs(reasonOrder) do
-                if AIM_DEBUG.reasons[k] then
-                    table.insert(parts, ("%s=%d"):format(k, AIM_DEBUG.reasons[k]))
-                end
+local function bindColor(section, spec)
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = Theme.element,
+        BorderSizePixel = 0,
+        LayoutOrder = section:next(),
+    }, { section.holder })
+    corner(holder, 7)
+    stroke(holder, Theme.stroke, 1, 0.5)
+
+    new("TextLabel", {
+        Size = UDim2.new(0.6, 0, 1, 0),
+        Position = UDim2.fromOffset(12, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = spec.text,
+    }, { holder })
+
+    local swatch = new("TextButton", {
+        Size = UDim2.fromOffset(52, 18),
+        Position = UDim2.new(1, -64, 0.5, -9),
+        BackgroundColor3 = getPath(spec.path) or Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 2,
+    }, { holder })
+    corner(swatch, 5)
+    stroke(swatch, Theme.stroke, 1, 0.3)
+
+    local popup, backdrop
+    local function closePopup()
+        if popup then popup:Destroy(); popup = nil end
+        if backdrop then backdrop:Destroy(); backdrop = nil end
+    end
+
+    swatch.MouseButton1Click:Connect(function()
+        if popup then
+            closePopup()
+            return
+        end
+
+        backdrop = new("TextButton", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Text = "",
+            ZIndex = 40,
+        }, { UI.gui })
+        backdrop.MouseButton1Click:Connect(closePopup)
+
+        popup = new("Frame", {
+            Size = UDim2.fromOffset(220, 132),
+            Position = UDim2.fromOffset(
+                math.max(4, holder.AbsolutePosition.X - 160),
+                holder.AbsolutePosition.Y + holder.AbsoluteSize.Y + 4
+            ),
+            BackgroundColor3 = Theme.panel,
+            BorderSizePixel = 0,
+            ZIndex = 41,
+        }, { UI.gui })
+        corner(popup, 8)
+        stroke(popup, Theme.stroke, 1, 0.2)
+
+        local current = getPath(spec.path) or Color3.new(1, 1, 1)
+
+        local preview = new("Frame", {
+            Size = UDim2.new(1, -20, 0, 22),
+            Position = UDim2.fromOffset(10, 10),
+            BackgroundColor3 = current,
+            BorderSizePixel = 0,
+            ZIndex = 42,
+        }, { popup })
+        corner(preview, 6)
+
+        local function applyColor()
+            setPath(spec.path, current)
+            swatch.BackgroundColor3 = current
+            preview.BackgroundColor3 = current
+            if spec.onChanged then
+                local ok, err = pcall(spec.onChanged, current)
+                if not ok then toast("Fehler: " .. tostring(err), Theme.danger) end
             end
-            table.insert(out, #parts > 0 and table.concat(parts, "  ") or "(nothing yet)")
+        end
 
-            table.insert(out, "-- players, as the aim sees them (teamless counts as enemy) --")
+        local channels = { "R", "G", "B" }
+        for index, channel in ipairs(channels) do
+            local startFrac = (channel == "R" and current.R) or (channel == "G" and current.G) or current.B
+
+            local trackHolder = new("Frame", {
+                Size = UDim2.new(1, -20, 0, 22),
+                Position = UDim2.fromOffset(10, 40 + (index - 1) * 26),
+                BackgroundTransparency = 1,
+                ZIndex = 42,
+            }, { popup })
+
+            new("TextLabel", {
+                Size = UDim2.fromOffset(14, 22),
+                BackgroundTransparency = 1,
+                Font = Enum.Font.GothamBold,
+                TextSize = 11,
+                TextColor3 = Theme.dim,
+                Text = channel,
+                ZIndex = 43,
+            }, { trackHolder })
+
+            local track = new("Frame", {
+                Size = UDim2.new(1, -20, 0, 8),
+                Position = UDim2.fromOffset(18, 7),
+                BackgroundColor3 = Theme.window,
+                BorderSizePixel = 0,
+                Active = true,
+                ZIndex = 43,
+            }, { trackHolder })
+            corner(track, 4)
+
+            local fill = new("Frame", {
+                Size = UDim2.new(startFrac, 0, 1, 0),
+                BackgroundColor3 = Theme.accent,
+                BorderSizePixel = 0,
+                ZIndex = 44,
+            }, { track })
+            corner(fill, 4)
+
+            local dragging = false
+            local function setFromX(mouseX)
+                local frac = math.clamp((mouseX - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+                local value = math.floor(frac * 255 + 0.5)
+                local r = math.floor(current.R * 255 + 0.5)
+                local g = math.floor(current.G * 255 + 0.5)
+                local b = math.floor(current.B * 255 + 0.5)
+                if channel == "R" then
+                    current = Color3.fromRGB(value, g, b)
+                elseif channel == "G" then
+                    current = Color3.fromRGB(r, value, b)
+                else
+                    current = Color3.fromRGB(r, g, value)
+                end
+                fill.Size = UDim2.new(frac, 0, 1, 0)
+                applyColor()
+            end
+
+            track.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    setFromX(input.Position.X)
+                end
+            end)
+            track.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = false
+                end
+            end)
+            keepConnection(UIS.InputChanged:Connect(function(input)
+                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    setFromX(input.Position.X)
+                end
+            end))
+        end
+    end)
+
+    table.insert(UI.refreshers, function()
+        local color = getPath(spec.path)
+        if typeof(color) == "Color3" then swatch.BackgroundColor3 = color end
+    end)
+
+    local element = {}
+    function element:Set(value)
+        setPath(spec.path, value)
+        swatch.BackgroundColor3 = value
+        if spec.onChanged then pcall(spec.onChanged, value) end
+    end
+    return element
+end
+
+UI.binders = { Toggle = bindToggle, Slider = bindSlider, Dropdown = bindDropdown, Color = bindColor }
+
+-- ------------------------------------------------------ Silent-Aim-Tab
+local function onAimEnabledChanged(value)
+    syncAimGlobals()
+    if value and not State.hookInstalled then
+        local ok, reason = pcall(installHook)
+        if not ok then
+            AIM_DEBUG.hook = "Fehler: " .. tostring(reason)
+            toast("Hook-Installation fehlgeschlagen: " .. tostring(reason), Theme.danger)
+        else
+            toast("Hook: " .. AIM_DEBUG.hook, Theme.success)
+        end
+    end
+end
+
+local menuOk, menuErr = pcall(function()
+    local aimTab = window:Tab("Silent Aim")
+    do
+        local s = aimTab:Section("Ziel")
+        s:Toggle({
+            text = "Silent Aim aktiv", path = "Aim.Enabled", keybind = "AimToggle",
+            onChanged = onAimEnabledChanged,
+        })
+        s:Toggle({ text = "Nur solange Taste gehalten", path = "Aim.HoldToAim" })
+        s:Slider({ text = "FOV (Radius)", path = "Aim.FOV", min = 20, max = 1200, step = 10, suffix = " px",
+            onChanged = syncAimGlobals })
+        s:Slider({ text = "Max. Distanz (0 = egal)", path = "Aim.MaxDistance", min = 0, max = 2000, step = 25, suffix = " studs" })
+        s:Toggle({ text = "Team-Check", path = "Aim.TeamCheck" })
+        s:Toggle({ text = "Nur sichtbare Ziele", path = "Aim.VisibleOnly" })
+        s:Toggle({ text = "ForceField ignorieren", path = "Aim.IgnoreForcefield" })
+        s:Dropdown({ text = "Ziel-Part", path = "Aim.TargetPart", options = { "Head", "HumanoidRootPart", "Nearest" } })
+
+        local v = aimTab:Section("Anzeige")
+        v:Toggle({ text = "FOV-Kreis", path = "Aim.ShowFOV" })
+        v:Color({ text = "FOV-Farbe", path = "Aim.FOVColor" })
+        v:Toggle({ text = "Tracer", path = "Aim.Tracers" })
+        v:Color({ text = "Tracer-Farbe", path = "Aim.TracerColor" })
+        v:Slider({ text = "Tracer-Dicke", path = "Aim.TracerThickness", min = 1, max = 6, step = 1, suffix = " px" })
+        v:Toggle({ text = "Ziel-Info am Fadenkreuz", path = "Aim.TargetInfo" })
+        v:Color({ text = "Info-Farbe", path = "Aim.InfoColor" })
+    end
+
+    local espTab = window:Tab("ESP")
+    do
+        local s = espTab:Section("Allgemein")
+        s:Toggle({ text = "ESP aktiv", path = "ESP.Enabled", keybind = "ESPToggle" })
+        s:Toggle({ text = "Team-Check", path = "ESP.TeamCheck" })
+        s:Toggle({ text = "Nur sichtbare Spieler", path = "ESP.VisibleOnly" })
+        s:Slider({ text = "Max. Distanz (0 = egal)", path = "ESP.MaxDistance", min = 0, max = 3000, step = 50, suffix = " studs" })
+
+        local c = espTab:Section("Chams (Highlight)")
+        c:Toggle({ text = "Highlight", path = "ESP.Highlight" })
+        c:Dropdown({ text = "Farbe nach", path = "ESP.ColorMode", options = { "Static", "Team", "Health", "Distance" } })
+        c:Color({ text = "Fuellfarbe (Static)", path = "ESP.FillColor" })
+        c:Slider({ text = "Fuell-Transparenz", path = "ESP.FillTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
+        c:Color({ text = "Umriss-Farbe", path = "ESP.OutlineColor" })
+        c:Slider({ text = "Umriss-Transparenz", path = "ESP.OutlineTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
+        c:Toggle({ text = "Immer durch Waende sichtbar", path = "ESP.AlwaysOnTop" })
+
+        local b = espTab:Section("2D-Elemente")
+        b:Toggle({ text = "Box", path = "ESP.Box" })
+        b:Slider({ text = "Box-Dicke", path = "ESP.BoxThickness", min = 1, max = 5, step = 1, suffix = " px" })
+        b:Slider({ text = "Box-Transparenz", path = "ESP.BoxTransparency", min = 0, max = 1, step = 0.05, decimals = 2 })
+        b:Toggle({ text = "Name", path = "ESP.Name" })
+        b:Color({ text = "Name-Farbe", path = "ESP.NameColor" })
+        b:Slider({ text = "Name-Groesse", path = "ESP.NameSize", min = 8, max = 22, step = 1 })
+        b:Toggle({ text = "Distanz", path = "ESP.Distance" })
+        b:Color({ text = "Distanz-Farbe", path = "ESP.DistanceColor" })
+        b:Slider({ text = "Distanz-Groesse", path = "ESP.DistanceSize", min = 8, max = 22, step = 1 })
+        b:Toggle({ text = "Healthbar", path = "ESP.HealthBar" })
+        b:Slider({ text = "Healthbar-Breite", path = "ESP.HealthBarWidth", min = 1, max = 8, step = 1, suffix = " px" })
+    end
+
+    local playerTab = window:Tab("Player")
+    do
+        local s = playerTab:Section("Movement")
+        s:Toggle({
+            text = "Noclip", path = "Player.Noclip", keybind = "Noclip",
+            onChanged = function(value) setNoclip(value) end,
+        })
+        s:Label("Vorlage: neue Features als Section + Toggle ergaenzen (siehe Kopf-Kommentar).")
+
+        local w = playerTab:Section("Welt")
+        w:Toggle({
+            text = "Fullbright", path = "Player.Fullbright", keybind = "Fullbright",
+            onChanged = function(value) setFullbright(value) end,
+        })
+    end
+
+    local settingsTab = window:Tab("Einstellungen")
+    do
+        local m = settingsTab:Section("Menue")
+        m:Toggle({ text = "Menue sichtbar", path = "Menu.Visible", keybind = "MenuToggle", onChanged = function(value)
+            UI.gui.Enabled = value
+        end })
+        m:Slider({ text = "UI-Groesse", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
+            onChanged = function(value) window:SetScale(value) end })
+
+        local c = settingsTab:Section("Config")
+        c:Label("Speichert alle Optionen in " .. CONFIG_FILE .. " (braucht writefile).")
+        c:Button({ text = "Config speichern", callback = saveConfig })
+        c:Button({ text = "Config laden", callback = function() loadConfig(false) end })
+        c:Button({ text = "Config loeschen", color = Theme.danger, callback = function()
+            if typeof(delfile) == "function" then
+                pcall(delfile, CONFIG_FILE)
+                toast("Config geloescht", Theme.danger)
+            else
+                toast("Executor hat kein delfile", Theme.danger)
+            end
+        end })
+
+        local u = settingsTab:Section("Skript")
+        u:Label("Build: " .. AIM_DEBUG.mode)
+        u:Button({ text = "Menue neu positionieren", callback = function()
+            window.frame.Position = UDim2.fromOffset(70, 110)
+        end })
+        u:Button({ text = "Unload (alles entfernen)", color = Theme.danger, callback = function()
+            if _G.__scpUnload then _G.__scpUnload() end
+        end })
+    end
+
+    if DEBUG_AIM then
+        local debugTab = window:Tab("Debug")
+        local s = debugTab:Section("Silent Aim")
+        debugTab.labels = {
+            mode = s:Label("Build: " .. AIM_DEBUG.mode),
+            hook = s:Label("Hook: " .. AIM_DEBUG.hook),
+            env = s:Label(""),
+            calls = s:Label(""),
+            last = s:Label(""),
+            reasons = s:Label(""),
+            players = s:Label(""),
+        }
+    end
+end)
+
+if not menuOk then
+    warn("[menu] UI-Aufbau fehlgeschlagen: " .. tostring(menuErr))
+end
+
+--=====================================================================
+-- [12] RENDER- UND INPUT-LOOPS
+--=====================================================================
+local function ensureAimVisuals()
+    if State.fovFrame then return end
+    local parent = UI.gui or guiParent()
+
+    local fov = new("Frame", {
+        Name = "FOV",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Visible = false,
+    }, { parent })
+    corner(fov, 999)
+    State.fovStroke = stroke(fov, Theme.accent, 1.5, 0)
+    State.fovFrame = fov
+
+    State.tracerFrame = new("Frame", {
+        Name = "Tracer",
+        BackgroundColor3 = Theme.accent,
+        BorderSizePixel = 0,
+        Visible = false,
+    }, { parent })
+
+    State.infoLabel = new("TextLabel", {
+        Name = "TargetInfo",
+        Size = UDim2.fromOffset(260, 16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = Theme.text,
+        TextStrokeTransparency = 0.35,
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        Text = "",
+        Visible = false,
+    }, { parent })
+end
+
+local function gunScreenPoint(): Vector2
+    local cam = currentCam()
+    local char = plr.Character
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        local handle = tool and tool:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            local sp, onScreen = cam:WorldToViewportPoint(handle.Position)
+            if onScreen then return Vector2.new(sp.X, sp.Y) end
+        end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local sp, onScreen = cam:WorldToViewportPoint(hrp.Position)
+            if onScreen then return Vector2.new(sp.X, sp.Y) end
+        end
+    end
+    return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
+end
+
+local function updateAimVisuals()
+    local cfg = Config.Aim
+    if not UI.gui then return end
+    ensureAimVisuals()
+    local active = cfg.Enabled and not USE_AUTHOR_AIM_UI
+
+    if active and cfg.ShowFOV then
+        local point = mousePoint()
+        State.fovFrame.Visible = true
+        State.fovFrame.Size = UDim2.fromOffset(cfg.FOV * 2, cfg.FOV * 2)
+        State.fovFrame.Position = UDim2.fromOffset(math.floor(point.X - cfg.FOV), math.floor(point.Y - cfg.FOV))
+        State.fovStroke.Color = cfg.FOVColor
+    else
+        State.fovFrame.Visible = false
+    end
+
+    local target, targetPlayer
+    if active and (cfg.Tracers or cfg.TargetInfo) then
+        target = findTarget(currentCam().CFrame.Position, true)
+        if target then
+            targetPlayer = Players:GetPlayerFromCharacter(target.Parent :: any)
+        end
+    end
+
+    if active and cfg.Tracers and target then
+        local sp, onScreen = currentCam():WorldToViewportPoint(target.Position)
+        if onScreen then
+            State.tracerFrame.BackgroundColor3 = cfg.TracerColor
+            drawLine(State.tracerFrame, gunScreenPoint(), Vector2.new(sp.X, sp.Y), cfg.TracerThickness)
+        else
+            State.tracerFrame.Visible = false
+        end
+    else
+        State.tracerFrame.Visible = false
+    end
+
+    if active and cfg.TargetInfo and target and targetPlayer then
+        local char = targetPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local dist = (currentCam().CFrame.Position - target.Position).Magnitude
+        local point = mousePoint()
+        State.infoLabel.Visible = true
+        State.infoLabel.TextColor3 = cfg.InfoColor
+        State.infoLabel.Text = ("%s  |  %d HP  |  %d studs"):format(
+            targetPlayer.Name,
+            hum and math.floor(hum.Health) or 0,
+            math.floor(dist)
+        )
+        State.infoLabel.Position = UDim2.fromOffset(math.floor(point.X - 130), math.floor(point.Y + 24))
+    else
+        State.infoLabel.Visible = false
+    end
+end
+
+local function updateDebugTab()
+    if not DEBUG_AIM then return end
+    for _, tab in ipairs(window.tabs) do
+        if tab.labels then
+            local labels = tab.labels
+            labels.mode.Text = "Build: " .. AIM_DEBUG.mode
+            labels.hook.Text = "Hook: " .. AIM_DEBUG.hook
+            labels.env.Text = ("hookfunction=%s  getsenv=%s  controller=%s  bulletHit=%s  fremd-UI=%s"):format(
+                tostring(hookfunction ~= nil), tostring(getsenv ~= nil),
+                tostring(AIM_DEBUG.controller), tostring(AIM_DEBUG.bulletHit), tostring(AIM_DEBUG.uiLoaded)
+            )
+            labels.calls.Text = ("getTarget: calls=%d  mit Ziel=%d"):format(AIM_DEBUG.calls, AIM_DEBUG.hits)
+            labels.last.Text = "Letztes Ziel: " .. AIM_DEBUG.lastTarget
+            local parts = {}
+            for reason, count in pairs(AIM_DEBUG.reasons) do
+                table.insert(parts, ("%s=%d"):format(reason, count))
+            end
+            labels.reasons.Text = "Gruende: " .. (#parts > 0 and table.concat(parts, "  ") or "-")
+            local lines = {}
             for _, p in next, Players:GetPlayers() do
                 if p ~= plr then
-                    table.insert(out, ("%s | team=%s | same team for aim=%s"):format(
-                        p.Name,
-                        p.Team and p.Team.Name or "NONE",
-                        tostring(isSameTeam(p, false))
+                    table.insert(lines, ("%s [%s] same=%s"):format(
+                        p.Name, p.Team and p.Team.Name or "NONE", tostring(isSameTeam(p, false))
                     ))
                 end
             end
-
-            panel.Text = table.concat(out, "\n")
-            task.wait(0.25)
+            labels.players.Text = "Spieler:\n" .. table.concat(lines, "\n")
         end
-    end)
+    end
 end
 
-print("Merged: silent aim (main.luau) + DeepHat ESP loaded. Build: " .. AIM_DEBUG.mode)
+local frameCounter = 0
+keepConnection(RunService.RenderStepped:Connect(function()
+    if State.unloaded then return end
+
+    local ok, err = pcall(function()
+        updateAimVisuals()
+        updateESP()
+    end)
+    if not ok then
+        warn("[menu] Render-Fehler: " .. tostring(err))
+    end
+
+    frameCounter += 1
+    if frameCounter % 20 == 0 then
+        pcall(function()
+            window:SetStatus(("%s  |  %d Spieler  |  %.0fs"):format(executor, #Players:GetPlayers(), os.clock() - startedAt))
+            updateDebugTab()
+        end)
+    end
+
+    if Config.Player.Noclip then
+        pcall(noclipApply)
+    end
+end))
+
+keepConnection(UIS.InputBegan:Connect(function(input, processed)
+    if processed then return end
+
+    -- Keybind-Aufnahme
+    if UI.promptBind then
+        local bind = UI.promptBind
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            Config.Keybinds[bind.keybind] = input.KeyCode
+            UI.promptBind = nil
+            if bind.refresh then bind.refresh() end
+            toast("Taste gesetzt: " .. input.KeyCode.Name, Theme.accent)
+        else
+            UI.promptBind = nil
+            if bind.refresh then bind.refresh() end
+        end
+        return
+    end
+
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    local key = input.KeyCode
+
+    if key == Config.Keybinds.MenuToggle then
+        Config.Menu.Visible = not UI.gui.Enabled
+        UI.gui.Enabled = Config.Menu.Visible
+        UI:RefreshAll()
+
+    elseif key == Config.Keybinds.AimToggle then
+        if Config.Aim.HoldToAim then
+            State.aimKeyDown = true
+            if not State.hookInstalled then pcall(installHook) end
+        else
+            local value = not Config.Aim.Enabled
+            setPath("Aim.Enabled", value)
+            UI:RefreshAll()
+            onAimEnabledChanged(value)
+            toast("Silent Aim " .. (value and "AN" or "AUS"), value and Theme.success or Theme.dim)
+        end
+
+    elseif key == Config.Keybinds.ESPToggle then
+        local value = not Config.ESP.Enabled
+        setPath("ESP.Enabled", value)
+        UI:RefreshAll()
+        toast("ESP " .. (value and "AN" or "AUS"), value and Theme.success or Theme.dim)
+
+    elseif key == Config.Keybinds.Noclip then
+        local value = not Config.Player.Noclip
+        setPath("Player.Noclip", value)
+        UI:RefreshAll()
+        pcall(setNoclip, value)
+
+    elseif key == Config.Keybinds.Fullbright then
+        local value = not Config.Player.Fullbright
+        setPath("Player.Fullbright", value)
+        UI:RefreshAll()
+        pcall(setFullbright, value)
+    end
+end))
+
+keepConnection(UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Config.Keybinds.AimToggle then
+        State.aimKeyDown = false
+    end
+end))
+
+keepConnection(Players.PlayerRemoving:Connect(function(p)
+    destroyESPObjects(p)
+end))
+
+keepConnection(plr.CharacterAdded:Connect(function()
+    Noclip.saved = nil
+    if Config.Player.Noclip then
+        task.wait(1)
+        pcall(noclipApply)
+    end
+    if Config.Player.Fullbright then
+        pcall(setFullbright, true)
+    end
+end))
+
+--=====================================================================
+-- [13] START / UNLOAD
+--=====================================================================
+do
+    pcall(function()
+        loadConfig(true)
+    end)
+
+    syncAimGlobals()
+    window:SetScale(Config.Menu.Scale)
+    UI.gui.Enabled = Config.Menu.Visible
+
+    if Config.Player.Noclip then pcall(setNoclip, true) end
+    if Config.Player.Fullbright then pcall(setFullbright, true) end
+
+    if Config.Aim.Enabled then
+        local ok, reason = pcall(installHook)
+        if not ok then
+            AIM_DEBUG.hook = "Fehler: " .. tostring(reason)
+        end
+    end
+
+    UI:RefreshAll()
+
+    _G.__scpUnload = function()
+        State.unloaded = true
+        for _, conn in ipairs(State.connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        clearESP()
+        pcall(setNoclip, false)
+        pcall(setFullbright, false)
+        if State.hookInstalled and State.bulletHit and restorefunction then
+            pcall(restorefunction, State.bulletHit)
+        end
+        if UI.gui then UI.gui:Destroy() end
+        _G.__scpUnload = nil
+        warn("[menu] entladen")
+    end
+
+    toast("Silent Aim " .. (Config.Aim.Enabled and "AN" or "AUS") .. "  |  Hook: " .. AIM_DEBUG.hook,
+        AIM_DEBUG.hook == "installiert auf Controller.BulletHit" and Theme.success or Theme.danger)
+    toast("Tasten: K Menue, RightShift Aim, V ESP, N Noclip, B Fullbright", Theme.accent)
+
+    print(("[menu] v2.0 geladen | executor=%s | aim-build=%s | hook=%s")
+        :format(executor, AIM_DEBUG.mode, AIM_DEBUG.hook))
+end
