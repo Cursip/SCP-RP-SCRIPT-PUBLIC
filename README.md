@@ -134,6 +134,18 @@ The Debug tab shows `Hook: installed on Controller.BulletHit` when it is set up 
 2. `git commit -am "..." && git push`
 3. run `loader.lua` in the executor again → latest version (the raw CDN may lag 1–5 minutes)
 
+## Disclaimer
+
+This repository contains **dual-use game-modding code**, published for private use in your own
+Roblox session and for reading. It is not malware: it runs on the client, talks to no server of
+ours and collects nothing. What it *can* do is break the rules of the game you use it in — Roblox's
+Terms of Use and the game's own rules — and that is what can get an account banned, not GitHub.
+No warranty, use at your own risk.
+
+It builds on code from `sneekysscripts.uk` (see Credits) and claims no ownership of that code. If
+you are a rights holder and want something changed or removed, please open an issue on this
+repository before filing an abuse report — see [SECURITY.md](SECURITY.md).
+
 ## Credits
 
 The silent aim part comes from `sneekysscripts.uk` (`SCP_Roleplay/main.luau`,
