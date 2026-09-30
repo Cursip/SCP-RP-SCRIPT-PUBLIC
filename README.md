@@ -11,7 +11,9 @@ dropdowns, colour pickers and keybind fields, plus config save/load.
 | `[7]` | Every option as a default + save/load (JSON) |
 | `[8]` | Silent aim: target finder + **`BulletHit` hook** |
 | `[9]` | ESP: highlight (chams) + box + name + distance + healthbar |
+| `[9b]` | Player list window (team, role, HP, distance, ignored marking) |
 | `[10]` | Extra features: noclip, fullbright — template for new features |
+| `[10b]` | Utility (anti-AFK, FPS boost) + server stats |
 | `[11]` | Menu build — this is where you bind options |
 | `[12]` | Render and input loops |
 | `[13]` | Start + unload |
@@ -55,13 +57,16 @@ To rebind: click the key button on the right of a switch, then press the new key
 - enabled, team check, visible players only, max distance
 - chams/highlight with colour mode (`Static` / `Team` / `Health` / `Distance`), fill and outline colour, transparencies, "always visible through walls"
 - box (thickness/transparency), name (colour/size), distance (colour/size), healthbar (width)
+- name tag can show the detected role (e.g. "Forscher"), the player list window shows everyone with team, role, HP, distance and marks ignored players
 
 **Player**
 - noclip and fullbright, both with keybinds
+- anti-AFK (keeps you in the server), FPS boost (post effects and particle emitters off, fully restored when disabled)
 
 **Settings**
 - menu visible, UI scale
 - save / load / delete config
+- live server info (players, ping, FPS, server uptime, job id)
 - re-centre menu, unload (removes menu, FOV ring, ESP and toasts, restores the aim hook, turns noclip/fullbright off)
 
 ## Flags (section `[2]`)

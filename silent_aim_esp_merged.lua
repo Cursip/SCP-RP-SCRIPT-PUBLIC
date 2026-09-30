@@ -94,7 +94,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v2.4 (2026-09-30)"
+local BUILD = "v2.5 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -706,6 +706,7 @@ local Config = {
         Name = true,
         NameColor = Color3.fromRGB(240, 240, 240),
         NameSize = 13,
+        ShowRole = true,
         Distance = true,
         DistanceColor = Color3.fromRGB(200, 205, 215),
         DistanceSize = 12,
@@ -715,6 +716,15 @@ local Config = {
     Player = {
         Noclip = false,
         Fullbright = false,
+    },
+    Utility = {
+        AntiAFK = false,
+        FpsBoost = false,
+    },
+    List = {
+        Enabled = false,
+        ShowRole = true,
+        DimIgnored = true,
     },
     Keybinds = {
         MenuToggle = Enum.KeyCode.K,
@@ -926,6 +936,18 @@ local function characterLabels(player: Player, char: Model): { string }
     end
     labelCache[char] = { texts = texts, at = now }
     return texts
+end
+
+-- Best guess at the role text the game shows above the head (used by the ESP
+-- name tag and the player list). Pure numbers (health) are skipped.
+local function roleText(player: Player, char: Model?): string?
+    if not char then return nil end
+    for _, text in ipairs(characterLabels(player, char)) do
+        if #text >= 2 and #text <= 40 and not string.match(text, "^%d+$") and not string.match(text, "^%d+%s*HP$") then
+            return text
+        end
+    end
+    return nil
 end
 
 local function matchesRoleList(text: string?): boolean
@@ -1159,7 +1181,7 @@ local function createESPObjects(p: Player)
 
     objects.name = new("TextLabel", {
         Name = "esp_name_" .. p.UserId,
-        Size = UDim2.new(0, 200, 0, 16),
+        Size = UDim2.new(0, 240, 0, 18),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamBold,
         TextSize = cfg.NameSize,
@@ -1280,9 +1302,12 @@ local function updateESP()
                     objects.boxStroke.Thickness = cfg.BoxThickness
                     objects.boxStroke.Transparency = cfg.BoxTransparency
 
+                    local role = cfg.ShowRole and roleText(p, char) or nil
+                    local nameHeight = role and 32 or 16
                     objects.name.Visible = cfg.Name
-                    objects.name.Position = UDim2.fromOffset(math.floor(minX + w / 2 - 100), math.floor(minY - 16))
-                    objects.name.Text = p.Name
+                    objects.name.Size = UDim2.fromOffset(240, nameHeight)
+                    objects.name.Position = UDim2.fromOffset(math.floor(minX + w / 2 - 120), math.floor(minY - nameHeight))
+                    objects.name.Text = role and (p.Name .. "\n" .. role) or p.Name
                     objects.name.TextColor3 = cfg.NameColor
                     objects.name.TextSize = cfg.NameSize
 
@@ -1312,6 +1337,170 @@ local function updateESP()
                 destroyESPObjects(p)
             end
         end
+    end
+end
+
+--=====================================================================
+-- [9b] PLAYER LIST (own window inside the visuals GUI, so K keeps it)
+--=====================================================================
+local List = { frame = nil, canvas = nil, title = nil, rows = {} }
+
+local function ensurePlayerList()
+    if List.frame then return end
+    local parent = State.visualsGui or UI.gui
+    if not parent then return end
+
+    local frame = new("Frame", {
+        Name = "PlayerList",
+        Size = UDim2.fromOffset(258, 306),
+        Position = UDim2.new(0, 8, 1, -314),
+        BackgroundColor3 = Theme.window,
+        BackgroundTransparency = 0.15,
+        BorderSizePixel = 0,
+        Visible = false,
+    }, parent)
+    corner(frame, 8)
+    stroke(frame, Theme.stroke, 1, 0.2)
+
+    local bar = new("Frame", {
+        Name = "Bar",
+        Size = UDim2.new(1, 0, 0, 24),
+        BackgroundColor3 = Color3.fromRGB(18, 20, 25),
+        BorderSizePixel = 0,
+    }, frame)
+    corner(bar, 8)
+
+    List.title = new("TextLabel", {
+        Size = UDim2.new(1, -16, 1, 0),
+        Position = UDim2.fromOffset(10, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextColor3 = Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = "Players",
+    }, bar)
+
+    local canvas = new("ScrollingFrame", {
+        Size = UDim2.new(1, -8, 1, -30),
+        Position = UDim2.fromOffset(4, 26),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Theme.stroke,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, frame)
+    list(canvas, 2)
+    List.canvas = canvas
+    List.frame = frame
+
+    local dragging, startInput, startPos = false, nil, nil
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, startInput, startPos = true, input.Position, frame.Position
+        end
+    end)
+    keepConnection(UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - startInput
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end))
+    keepConnection(UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end))
+end
+
+local function listRow(index: number)
+    local row = List.rows[index]
+    if row then return row end
+    local frame = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = Theme.element,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        LayoutOrder = index,
+    }, List.canvas)
+    corner(frame, 5)
+    row = {
+        frame = frame,
+        name = new("TextLabel", {
+            Size = UDim2.new(1, -12, 0, 15),
+            Position = UDim2.fromOffset(6, 1),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.GothamBold,
+            TextSize = 11,
+            TextColor3 = Theme.text,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = "",
+        }, frame),
+        info = new("TextLabel", {
+            Size = UDim2.new(1, -12, 0, 13),
+            Position = UDim2.fromOffset(6, 15),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Gotham,
+            TextSize = 10,
+            TextColor3 = Theme.accent,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = "",
+        }, frame),
+    }
+    List.rows[index] = row
+    return row
+end
+
+local function updatePlayerList()
+    if not Config.List.Enabled then
+        if List.frame then List.frame.Visible = false end
+        return
+    end
+    ensurePlayerList()
+    if not List.frame then return end
+    List.frame.Visible = true
+
+    local cam = currentCam()
+    local entries = {}
+    for _, p in next, Players:GetPlayers() do
+        if p ~= plr then
+            local char = p.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            table.insert(entries, {
+                player = p,
+                hp = hum and math.floor(hum.Health) or nil,
+                dist = hrp and (cam.CFrame.Position - hrp.Position).Magnitude or nil,
+                role = char and roleText(p, char) or nil,
+                ignored = isIgnoredRole(p, char),
+            })
+        end
+    end
+    table.sort(entries, function(a, b)
+        return (a.dist or math.huge) < (b.dist or math.huge)
+    end)
+
+    List.title.Text = ("Players - %d"):format(#entries)
+    for index, entry in ipairs(entries) do
+        local row = listRow(index)
+        row.frame.Visible = true
+        local p = entry.player
+        local dimmed = Config.List.DimIgnored and entry.ignored
+        row.name.Text = p.Name
+        row.name.TextColor3 = dimmed and Theme.dim or Theme.text
+
+        local parts = {}
+        if Config.List.ShowRole and entry.role then table.insert(parts, entry.role) end
+        table.insert(parts, p.Team and p.Team.Name or "no team")
+        if entry.hp then table.insert(parts, entry.hp .. " HP") end
+        if entry.dist then table.insert(parts, ("%d studs"):format(entry.dist)) end
+        if entry.ignored then table.insert(parts, "ignored") end
+        row.info.Text = table.concat(parts, "  |  ")
+        row.info.TextColor3 = dimmed and Theme.dim or Theme.accent
+    end
+    for index = #entries + 1, #List.rows do
+        List.rows[index].frame.Visible = false
     end
 end
 
@@ -1380,6 +1569,122 @@ local function setFullbright(on: boolean)
         Fullbright.saved = nil
         toast("Fullbright OFF", Theme.dim)
     end
+end
+
+--=====================================================================
+-- [10b] UTILITY (anti-AFK, FPS boost) + SERVER STATS
+--=====================================================================
+local Stats = { fps = 0, frames = 0, fpsAt = os.clock(), ping = nil }
+
+local function getPing(): number?
+    local ok, value = pcall(function()
+        return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and type(value) == "number" then
+        return math.floor(value)
+    end
+    return nil
+end
+
+-- Anti-AFK: the handler is installed once and only checks the flag, so the
+-- toggle is instant and nothing has to be re-bound.
+do
+    local okVu, virtualUser = pcall(function()
+        return cloneref(game:GetService("VirtualUser"))
+    end)
+    if okVu and virtualUser then
+        keepConnection(plr.Idled:Connect(function()
+            if not Config.Utility.AntiAFK then return end
+            pcall(function()
+                virtualUser:CaptureController()
+                virtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                task.wait(1)
+                virtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            end)
+        end))
+    else
+        warn("[menu] VirtualUser unavailable, anti-AFK disabled")
+    end
+end
+
+-- FPS boost: post effects off, optionally every particle emitter off. The scan
+-- over workspace runs in chunks so it cannot freeze the game.
+local Fps = { effects = nil, emitters = nil, scanning = false, shadows = nil }
+
+local function boostScanEmitters()
+    if Fps.scanning or not Config.Utility.FpsBoost then return end
+    Fps.scanning = true
+    task.spawn(function()
+        Fps.emitters = Fps.emitters or {}
+        local seen = 0
+        for _, inst in ipairs(workspace:GetDescendants()) do
+            if not Config.Utility.FpsBoost then break end
+            seen += 1
+            if inst:IsA("ParticleEmitter") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") or inst:IsA("Trail") or inst:IsA("Beam") then
+                if inst.Enabled then
+                    Fps.emitters[inst] = true
+                    inst.Enabled = false
+                end
+            end
+            if seen % 2000 == 0 then
+                task.wait()
+            end
+        end
+        Fps.scanning = false
+    end)
+end
+
+local function setFpsBoost(on: boolean)
+    if on then
+        if not Fps.effects then
+            Fps.effects = {}
+            for _, inst in ipairs(Lighting:GetChildren()) do
+                if inst:IsA("PostEffect") then
+                    Fps.effects[inst] = inst.Enabled
+                    inst.Enabled = false
+                end
+            end
+        end
+        if not Config.Player.Fullbright then
+            if Fps.shadows == nil then
+                Fps.shadows = Lighting.GlobalShadows
+            end
+            Lighting.GlobalShadows = false
+        end
+        boostScanEmitters()
+        toast("FPS boost on", Theme.success)
+    else
+        if Fps.effects then
+            for inst, wasEnabled in pairs(Fps.effects) do
+                if inst.Parent then inst.Enabled = wasEnabled end
+            end
+            Fps.effects = nil
+        end
+        if Fps.emitters then
+            for inst in pairs(Fps.emitters) do
+                if inst.Parent then inst.Enabled = true end
+            end
+            Fps.emitters = nil
+        end
+        if Fps.shadows ~= nil then
+            if not Config.Player.Fullbright then
+                Lighting.GlobalShadows = Fps.shadows
+            end
+            Fps.shadows = nil
+        end
+        toast("FPS boost off", Theme.dim)
+    end
+end
+
+local statsLabels = nil
+
+local function updateStatsLabels()
+    if not statsLabels then return end
+    statsLabels.players.Text = ("Players: %d"):format(#Players:GetPlayers())
+    statsLabels.ping.Text = ("Ping: %s ms"):format(Stats.ping and tostring(Stats.ping) or "?")
+    statsLabels.fps.Text = ("FPS: %d"):format(Stats.fps)
+    statsLabels.uptime.Text = ("Server uptime: %d min"):format(math.floor(workspace.DistributedGameTime / 60))
+    statsLabels.job.Text = ("Job: %s"):format(game.JobId)
 end
 
 --=====================================================================
@@ -2009,11 +2314,18 @@ local menuOk, menuErr = pcall(function()
         b:Toggle({ text = "Name", path = "ESP.Name" })
         b:Color({ text = "Name color", path = "ESP.NameColor" })
         b:Slider({ text = "Name size", path = "ESP.NameSize", min = 8, max = 22, step = 1 })
+        b:Toggle({ text = "Show role in name tag", path = "ESP.ShowRole" })
         b:Toggle({ text = "Distance", path = "ESP.Distance" })
         b:Color({ text = "Distance color", path = "ESP.DistanceColor" })
         b:Slider({ text = "Distance size", path = "ESP.DistanceSize", min = 8, max = 22, step = 1 })
         b:Toggle({ text = "Healthbar", path = "ESP.HealthBar" })
         b:Slider({ text = "Healthbar width", path = "ESP.HealthBarWidth", min = 1, max = 8, step = 1, suffix = " px" })
+
+        local plist = espTab:Section("Player list")
+        plist:Toggle({ text = "Player list window", path = "List.Enabled" })
+        plist:Toggle({ text = "Show role", path = "List.ShowRole" })
+        plist:Toggle({ text = "Dim ignored players", path = "List.DimIgnored" })
+        plist:Label("Bottom left by default, drag it by its title bar. Stays visible while the menu is hidden.")
     end
 
     local playerTab = window:Tab("Player")
@@ -2030,6 +2342,11 @@ local menuOk, menuErr = pcall(function()
             text = "Fullbright", path = "Player.Fullbright", keybind = "Fullbright",
             onChanged = function(value) setFullbright(value) end,
         })
+
+        local ut = playerTab:Section("Utility")
+        ut:Toggle({ text = "Anti-AFK", path = "Utility.AntiAFK" })
+        ut:Toggle({ text = "FPS boost (effects + particles)", path = "Utility.FpsBoost", onChanged = setFpsBoost })
+        ut:Label("FPS boost turns post effects and particle emitters off; all of it is restored when disabled.")
     end
 
     local settingsTab = window:Tab("Settings")
@@ -2053,6 +2370,15 @@ local menuOk, menuErr = pcall(function()
                 toast("Executor has no delfile", Theme.danger)
             end
         end })
+
+        local sv = settingsTab:Section("Server")
+        statsLabels = {
+            players = sv:Label("Players: ..."),
+            ping = sv:Label("Ping: ..."),
+            fps = sv:Label("FPS: ..."),
+            uptime = sv:Label("Server uptime: ..."),
+            job = sv:Label("Job: ..."),
+        }
 
         local u = settingsTab:Section("Script")
         u:Label("Build: " .. AIM_DEBUG.mode)
@@ -2209,12 +2535,30 @@ keepConnection(RunService.RenderStepped:Connect(function()
         end
     end
 
+    -- fps counter for the server info panel
+    Stats.frames += 1
+    local nowClock = os.clock()
+    if nowClock - Stats.fpsAt >= 1 then
+        Stats.fps = math.floor(Stats.frames / (nowClock - Stats.fpsAt))
+        Stats.frames = 0
+        Stats.fpsAt = nowClock
+    end
+
     frameCounter += 1
     if frameCounter % 20 == 0 then
         pcall(function()
-            window:SetStatus(("%s  |  %s  |  %d players  |  %.0fs"):format(BUILD, executor, #Players:GetPlayers(), os.clock() - startedAt))
+            Stats.ping = getPing()
+            window:SetStatus(("%s  |  %d players  |  %s ms  |  %d fps"):format(
+                BUILD, #Players:GetPlayers(), Stats.ping and tostring(Stats.ping) or "?", Stats.fps))
             updateDebugTab()
+            updatePlayerList()
+            updateStatsLabels()
         end)
+    end
+
+    -- pick up particle emitters that spawned later (chunked scan)
+    if frameCounter % 1200 == 0 and Config.Utility.FpsBoost then
+        boostScanEmitters()
     end
 
     if Config.Player.Noclip then
@@ -2328,6 +2672,7 @@ do
 
     if Config.Player.Noclip then pcall(setNoclip, true) end
     if Config.Player.Fullbright then pcall(setFullbright, true) end
+    if Config.Utility.FpsBoost then pcall(setFpsBoost, true) end
 
     -- the hook was already installed in [11]; this is just a safety net
     if Config.Aim.Enabled and not State.hookInstalled then
@@ -2354,6 +2699,7 @@ do
         clearESP()
         pcall(setNoclip, false)
         pcall(setFullbright, false)
+        pcall(setFpsBoost, false)
 
         if State.hookInstalled and State.bulletHit and restorefunction then
             pcall(restorefunction, State.bulletHit)
