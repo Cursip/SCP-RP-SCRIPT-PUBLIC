@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.9 (2026-09-30)"
+local BUILD = "v4.0 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -710,7 +710,7 @@ local Config = {
         RoleIgnoreList = { "researcher", "forscher", "research", "wissenschaftler" },
         TargetInfo = true,
         InfoColor = Color3.fromRGB(240, 240, 240),
-        Prediction = 0.15,
+        Prediction = 0,
         Hitbox = false,
         HitboxSize = 6,
         HitboxTransparency = 1,
@@ -1232,10 +1232,12 @@ local function installHook(): (boolean, string)
         old = clonefunction(hookfunction(bulletHit, newcclosure(function(_, hitData, ...)
             local target = findTarget(currentCam().CFrame.Position)
             if target then
-                -- No prediction here on purpose: the game decides the hit from
-                -- the Instance field we send, so the shot lands on the selected
-                -- part no matter what. Position is only the impact point, and
-                -- leading it would just move that point off the target.
+                -- Position is sent exactly as measured. Testing showed that the
+                -- game does use it: with the prediction slider at maximum, some
+                -- shots stopped registering, because the impact point was moved
+                -- off the target. Small offsets survive inside the hitbox, but
+                -- there is no upside to leading here - the target part is what
+                -- decides the hit.
                 return old(_, {
                     ["Instance"] = target,
                     ["Position"] = target.Position,
@@ -2888,7 +2890,7 @@ local menuOk, menuErr = pcall(function()
         s:Dropdown({ text = "Aim mode", path = "Aim.Mode", options = { "Silent (BulletHit)", "Camera assist" }, onChanged = onAimModeChanged })
         s:Slider({ text = "Camera assist smoothness", path = "Aim.Smoothness", min = 0.05, max = 1, step = 0.05, decimals = 2 })
         s:Slider({ text = "Prediction (camera assist only)", path = "Aim.Prediction", min = 0, max = 0.5, step = 0.05, decimals = 2 })
-        s:Label("Only used by camera assist, to lead a moving target. Silent aim always hits the part it picks - the game takes the hit from the Instance field, so the impact position cannot change the outcome.")
+        s:Label("Leave this at 0. Silent aim always sends the exact impact position: with prediction at maximum, tests showed shots starting to miss, so the game does evaluate it. Only raise it if the game simulates bullet travel time.")
         s:Toggle({ text = "Hitbox expander", path = "Aim.Hitbox" })
         s:Slider({ text = "Hitbox size", path = "Aim.HitboxSize", min = 2, max = 20, step = 1 })
         s:Slider({ text = "Hitbox transparency", path = "Aim.HitboxTransparency", min = 0, max = 1, step = 0.1, decimals = 1 })
