@@ -87,6 +87,7 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 **Settings**
 - menu visible, UI scale
+- **wheel over the menu does not zoom the camera** (default on): the wheel input is sunk at the highest action priority while the pointer is inside the menu, so the menu scrolls and the character stays where it is. Both GUIs ignore the GUI inset, so the pointer position and the window bounds share one coordinate space. Turn it off if you ever want the wheel to zoom while the pointer is over the menu
 - save / load / delete config
 - presets: three slots (`scp_aim_esp_slot1.json` ...) with save/load buttons and "auto-load this slot at start"; the working config is loaded at start and remembers the slot
 - live server info (players, ping, FPS, server uptime, job id)

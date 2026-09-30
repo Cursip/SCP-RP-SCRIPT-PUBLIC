@@ -63,6 +63,7 @@ local TweenService = cloneref(game:GetService("TweenService"))
 local HttpService = cloneref(game:GetService("HttpService"))
 local Lighting = cloneref(game:GetService("Lighting"))
 local TeleportService = cloneref(game:GetService("TeleportService"))
+local ContextActionService = cloneref(game:GetService("ContextActionService"))
 
 local plr = Players.LocalPlayer
 local startedAt = os.clock()
@@ -106,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v3.3 (2026-09-30)"
+local BUILD = "v3.4 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -688,6 +689,7 @@ local Config = {
     Menu = {
         Visible = true,
         Scale = 1,
+        BlockCameraZoom = true,
     },
     Aim = {
         Enabled = true,
@@ -2983,6 +2985,7 @@ local menuOk, menuErr = pcall(function()
         m:Slider({ text = "UI scale", path = "Menu.Scale", min = 0.7, max = 1.4, step = 0.05, decimals = 2,
             onChanged = function(value) window:SetScale(value) end })
         m:Toggle({ text = "Watermark HUD", path = "Misc.Watermark" })
+        m:Toggle({ text = "Wheel over the menu does not zoom the camera", path = "Menu.BlockCameraZoom" })
 
         local pr = settingsTab:Section("Presets")
         pr:Dropdown({ text = "Slot", path = "Profile.Slot", options = { "Slot 1", "Slot 2", "Slot 3" } })
@@ -3046,6 +3049,35 @@ end
 --=====================================================================
 -- [12] RENDER AND INPUT LOOPS
 --=====================================================================
+
+-- While the pointer is over the menu, the wheel scrolls the menu only: sinking
+-- it at the highest priority keeps the game's camera module from zooming the
+-- character at the same time. Both GUIs ignore the GUI inset, so
+-- GetMouseLocation and AbsolutePosition share one coordinate space.
+local function pointerOverMenu(): boolean
+    local win = UI.window and UI.window.frame
+    if not (win and UI.gui and UI.gui.Enabled) then return false end
+    local pointer = UIS:GetMouseLocation()
+    local pos, size = win.AbsolutePosition, win.AbsoluteSize
+    return pointer.X >= pos.X and pointer.X <= pos.X + size.X
+        and pointer.Y >= pos.Y and pointer.Y <= pos.Y + size.Y
+end
+
+pcall(function()
+    ContextActionService:BindActionAtPriority(
+        "ScpMenuWheel",
+        function(_, inputState)
+            if inputState == Enum.UserInputState.Change
+                and Config.Menu.BlockCameraZoom and pointerOverMenu() then
+                return Enum.ContextActionResult.Sink
+            end
+            return Enum.ContextActionResult.Pass
+        end,
+        false,
+        math.huge,
+        Enum.UserInputType.MouseWheel
+    )
+end)
 local function ensureAimVisuals()
     if State.fovFrame then return end
     local parent = State.visualsGui or UI.gui or guiParent()
@@ -3409,6 +3441,9 @@ do
         end
         pcall(function()
             RunService:UnbindFromRenderStep("ScpAimStep")
+        end)
+        pcall(function()
+            ContextActionService:UnbindAction("ScpMenuWheel")
         end)
         if UI.gui then UI.gui:Destroy() end
         if State.visualsGui then State.visualsGui:Destroy() end
