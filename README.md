@@ -77,6 +77,11 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 - anti-AFK (keeps you in the server), FPS boost (post effects and particle emitters off, fully restored when disabled)
 - camera FOV slider, rejoin this server, server hop, remove fog and atmosphere
 
+**Fun** (own tab) — and the honest boundary of what a client script can do
+- **animation player**: pick one of the animations the game itself ships in the character's `Animate` script (`dance1`, `wave`, `laugh`, `sit`, `run`, …) and play it on your character. This is the *only* prank here that other players see, because a character's animation state is sent by that character's own client
+- **local gags**: fake breach alert and fake staff warning banner (duration slider) — for screenshots and videos; nothing in the game world changes and no other player sees it
+- **not possible client-side, so not built**: giving items, spawning objects for others, triggering game events, moving or teleporting other players, faking chat messages. All of that is server-authoritative: a client can only *ask* the server through remotes, and a request the game does not validate would be abuse of that game's code — not a feature, and the fastest way to get banned here. Anything that claims to do it either only changes your own screen or is exploiting a server bug
+
 **Safety** (own tab)
 - staff detector: checks a configurable group id and minimum rank (`GetRankInGroup`, cached for 10 s) and falls back to keywords in the role labels
 - the default group is **5479038 = "SCP | Roleplay Community"**, the official game group (owner `MetatableIndex`, verified, ~1.26M members). Its roles, read from the Roblox API: `1` Member/Roleplayer (normal players), `247` Hydray (custom role), `248` Trial Moderator, `249` Game Moderator, `250` Senior Moderator, `251` Head Moderator, `252` Developer, `253` Project Manager, `254` Coordinator, `255` Administrator. Staff therefore starts at **248** (the default minimum rank); normal members are rank 1 and are never flagged

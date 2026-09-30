@@ -107,7 +107,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.0 (2026-09-30)"
+local BUILD = "v4.1 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -760,6 +760,10 @@ local Config = {
     Misc = {
         RemoveFog = false,
         Watermark = true,
+    },
+    Fun = {
+        Animation = "dance1",
+        GagSeconds = 5,
     },
     Utility = {
         AntiAFK = false,
@@ -2241,6 +2245,108 @@ if plr.Character then
 end
 
 --=====================================================================
+-- [10f] FUN - animations (others see them) and local gags (only you)
+--=====================================================================
+local Fun = { track = nil }
+
+local function funAnimationNames(): { string }
+    return {
+        "dance1", "dance2", "dance3", "wave", "laugh", "cheer", "point",
+        "sit", "fall", "swim", "swimidle", "climb", "jump",
+        "idle1", "idle2", "walk", "run", "toolnone",
+    }
+end
+
+local function funAvailableAnimations(): { string }
+    local names = {}
+    local char = plr.Character
+    local script = char and char:FindFirstChild("Animate")
+    if script then
+        for _, obj in ipairs(script:GetChildren()) do
+            if obj:IsA("Animation") then
+                table.insert(names, obj.Name)
+            end
+        end
+    end
+    table.sort(names)
+    return names
+end
+
+local function funStop()
+    if Fun.track then
+        pcall(function() Fun.track:Stop() end)
+        Fun.track = nil
+    end
+end
+
+-- The only gag here that other players see: a character's animation state is
+-- sent by that character's own client, unlike part properties or new instances,
+-- which stay local.
+local function funPlay(name: string)
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    local script = char and char:FindFirstChild("Animate")
+    if not (animator and script) then
+        toast("No Animate script in the character - nothing to play here", Theme.danger)
+        return
+    end
+    local anim = script:FindFirstChild(name)
+    if not (anim and anim:IsA("Animation")) then
+        toast(("Animation \"%s\" does not exist in this game"):format(name), Theme.danger)
+        return
+    end
+    funStop()
+    local ok, track = pcall(function()
+        return animator:LoadAnimation(anim)
+    end)
+    if not ok or not track then
+        toast("Could not load that animation", Theme.danger)
+        return
+    end
+    Fun.track = track
+    pcall(function()
+        track.Priority = Enum.AnimationPriority.Action4
+        track.Looped = true
+        track:Play()
+    end)
+    toast(("Playing \"%s\" - other players see this one"):format(name), Theme.accent)
+end
+
+local function funBanner(text: string, color: Color3)
+    local parent = State.visualsGui
+    if not parent then
+        toast("No overlay layer available", Theme.danger)
+        return
+    end
+    local holder = new("Frame", {
+        Name = "FunBanner",
+        Size = UDim2.fromOffset(600, 48),
+        Position = UDim2.new(0.5, -300, 0.07, 0),
+        BackgroundColor3 = Color3.fromRGB(12, 14, 18),
+        BackgroundTransparency = 0.1,
+        BorderSizePixel = 0,
+        ZIndex = 40,
+    }, parent)
+    corner(holder, 8)
+    stroke(holder, color, 1.5, 0.1)
+    new("TextLabel", {
+        Size = UDim2.new(1, -16, 1, 0),
+        Position = UDim2.fromOffset(8, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 17,
+        TextColor3 = color,
+        TextWrapped = true,
+        Text = text,
+        ZIndex = 41,
+    }, holder)
+    task.delay(math.max(1, Config.Fun.GagSeconds), function()
+        pcall(function() holder:Destroy() end)
+    end)
+end
+
+--=====================================================================
 -- [11] MENU BUILD
 --=====================================================================
 -- Visuals (FOV ring, target info, ESP, toasts) live in their own ScreenGui, so
@@ -2983,6 +3089,25 @@ local menuOk, menuErr = pcall(function()
         mv:Label("These are the features this game checks most (walk speed, flight). Everything here is off by default.")
     end
 
+    local funTab = window:Tab("Fun")
+    do
+        local s = funTab:Section("Animation (others see this)")
+        s:Dropdown({ text = "Animation", path = "Fun.Animation", options = funAnimationNames() })
+        s:Button({ text = "Play on my character", callback = function() funPlay(Config.Fun.Animation) end })
+        s:Button({ text = "Stop animation", callback = funStop })
+        s:Label("Animations are the only prank that leaves your screen: a character's animation state is sent by its own client. Part properties, spawned instances and sounds created locally are not replicated.")
+
+        local g = funTab:Section("Local gags (only you see them)")
+        g:Slider({ text = "Gag duration", path = "Fun.GagSeconds", min = 1, max = 20, step = 1, suffix = " s" })
+        g:Button({ text = "Fake breach alert", callback = function()
+            funBanner("!! SCP BREACH DETECTED - ALL PERSONNEL REPORT TO THE BLAST DOORS !!", Theme.danger)
+        end })
+        g:Button({ text = "Fake staff warning", callback = function()
+            funBanner("STAFF NOTICE: PLEASE STOP AND WAIT FOR A MODERATOR", Color3.fromRGB(255, 196, 84))
+        end })
+        g:Label("For screenshots and videos. Nothing in the game world changes, and no other player sees it.")
+    end
+
     local safetyTab = window:Tab("Safety")
     do
         local s = safetyTab:Section("Staff detector")
@@ -3318,7 +3443,9 @@ local function updateDebugTab()
                 zoomNow and ("%.1f"):format(zoomNow) or "?",
                 ZoomGuard.blocked
             )
+            local anims = funAvailableAnimations()
             labels.last.Text = "Last target: " .. AIM_DEBUG.lastTarget
+                .. "  |  animations here: " .. (#anims > 0 and table.concat(anims, ", ") or "-")
             local parts = {}
             for reason, count in pairs(AIM_DEBUG.reasons) do
                 table.insert(parts, ("%s=%d"):format(reason, count))
@@ -3524,6 +3651,7 @@ end))
 
 keepConnection(plr.CharacterAdded:Connect(function(char)
     Noclip.saved = nil
+    funStop()
     pcall(bindCharacter, char)
     if Config.Player.Noclip then
         task.wait(1)
@@ -3572,6 +3700,7 @@ do
         Config.Aim.Hitbox = false
         pcall(updateHitbox)
         pcall(setRemoveFog, false)
+        funStop()
         pcall(setNoclip, false)
         pcall(setFullbright, false)
         pcall(setFpsBoost, false)
