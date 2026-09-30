@@ -78,8 +78,10 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 **Safety** (own tab)
 - staff detector: checks a configurable group id and minimum rank (`GetRankInGroup`, cached for 10 s) and falls back to keywords in the role labels
+- the default group is **5479038 = "SCP | Roleplay Community"**, the official game group (owner `MetatableIndex`, verified, ~1.26M members). Its roles, read from the Roblox API: `1` Member/Roleplayer (normal players), `247` Hydray (custom role), `248` Trial Moderator, `249` Game Moderator, `250` Senior Moderator, `251` Head Moderator, `252` Developer, `253` Project Manager, `254` Coordinator, `255` Administrator. Staff therefore starts at **248** (the default minimum rank); normal members are rank 1 and are never flagged
 - notifies when staff is in the server, marks them `[STAFF]` in red in the ESP and the player list
 - panic mode: switches aim, ESP and noclip off while staff is present (they stay off until you enable them again)
+- anti-moderator: unload the script and leave the server as soon as staff joins
 
 **Settings**
 - menu visible, UI scale

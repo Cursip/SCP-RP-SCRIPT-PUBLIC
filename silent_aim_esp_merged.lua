@@ -772,13 +772,16 @@ local Config = {
         Slot = "Slot 1",
         AutoLoad = false,
     },
-    -- Staff detection, modelled on the group/rank check used by Vodka Hub
-    -- (SCP:RP staff group). Verify the id/rank for your game; the keyword list
-    -- is a fallback that reads the labels the game puts on a character.
+    -- Staff detection. Group 5479038 is "SCP | Roleplay Community" (the official
+    -- game group, verified via the Roblox API). Its roles: 1 = Member/Roleplayer
+    -- (normal players), 247 = Hydray (custom role), 248 = Trial Moderator,
+    -- 249 = Game Moderator, 250 = Senior Moderator, 251 = Head Moderator,
+    -- 252 = Developer, 253 = Project Manager, 254 = Coordinator,
+    -- 255 = Administrator. So staff starts at 248.
     Staff = {
         Enabled = true,
         GroupId = 5479038,
-        MinRank = 200,
+        MinRank = 248,
         Keywords = { "moderator", "admin", "staff", "owner", "developer" },
         Notify = true,
         Panic = false,
@@ -2927,7 +2930,7 @@ local menuOk, menuErr = pcall(function()
         s:Toggle({ text = "Panic mode: switch aim/ESP/noclip off while staff is present", path = "Staff.Panic" })
         s:Toggle({ text = "Anti-moderator: unload and leave when staff joins", path = "Staff.LeaveOnStaff" })
         s:Slider({ text = "Minimum staff rank", path = "Staff.MinRank", min = 0, max = 255, step = 1 })
-        s:Label("Group id " .. tostring(Config.Staff.GroupId) .. " - change Config.Staff.GroupId if your game uses another group.")
+        s:Label("Group: SCP | Roleplay Community (" .. tostring(Config.Staff.GroupId) .. "). Staff ranks there start at 248 (Trial Moderator); Game/Senior/Head Moderator are 249-251, Developer to Administrator 252-255. Normal members are rank 1, so they are never flagged.")
         s:Label("Extra keywords checked in the role labels: " .. table.concat(Config.Staff.Keywords, ", "))
         s:Label("Detected staff is marked [STAFF] in red in the ESP and in the player list, so you can see who is watching.")
     end
