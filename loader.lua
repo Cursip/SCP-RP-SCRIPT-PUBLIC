@@ -1,14 +1,17 @@
 -- loader.lua - stable entry point, always loads the newest revision.
 --
--- GitHub's raw CDN (and some executors cache HttpGet responses) can serve an
--- outdated copy for a few minutes. This loader avoids that:
---   1. read the current commit SHA from the GitHub API (never cached),
---   2. fetch the script pinned to that exact revision,
---   3. append a unique stamp so no cache can answer the request.
--- If the API is unreachable it falls back to the branch URL plus a stamp.
+-- GitHub's raw CDN, and some executors' HttpGet proxies, keep serving stale
+-- copies for a while. This loader works around that:
+--   1. read the newest commit SHA from the GitHub API (not CDN cached),
+--   2. read the expected file size for that revision from the contents API,
+--   3. try several URLs - revision pinned first, branch with a unique stamp
+--      second - and accept the first body whose size matches the API value.
+-- If the API is unreachable, the stamped branch URL is used unverified.
 --
 -- Usage (executor):
 --   loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-PUBLIC/main/loader.lua"))()
+-- If that URL is cached itself, add a stamp:
+--   loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-PUBLIC/main/loader.lua?t=" .. os.time()))()
 
 local REPO = "Cursip/SCP-RP-SCRIPT-PUBLIC"
 local BRANCH = "main"
@@ -26,26 +29,46 @@ local function httpGet(url)
     return nil
 end
 
+local RAW = "https://raw.githubusercontent.com/" .. REPO .. "/"
+local API = "https://api.github.com/repos/" .. REPO .. "/"
 local stamp = tostring(os.time()) .. tostring(math.random(100000, 999999))
 
--- 1) newest commit SHA from the API
+-- 1) newest commit SHA
 local rev
-local apiBody = httpGet("https://api.github.com/repos/" .. REPO .. "/commits/" .. BRANCH)
-if apiBody then
-    rev = string.match(apiBody, '"sha"%s*:%s*"(%x+)"')
+local commitBody = httpGet(API .. "commits/" .. BRANCH)
+if commitBody then
+    rev = string.match(commitBody, '"sha"%s*:%s*"(%x+)"')
 end
 
--- 2) candidates: pinned revision first, branch as fallback
+-- 2) expected size of that revision (used to detect a stale body)
+local expected
+local contentsBody = httpGet(API .. "contents/" .. FILE .. "?ref=" .. (rev or BRANCH))
+if contentsBody then
+    local size = string.match(contentsBody, '"size"%s*:%s*(%d+)')
+    if size then expected = tonumber(size) end
+end
+
+-- 3) candidates: pinned revision first, then the branch with a unique stamp
 local candidates = {}
 if rev then
-    table.insert(candidates, "https://raw.githubusercontent.com/" .. REPO .. "/" .. rev .. "/" .. FILE .. "?t=" .. stamp)
+    table.insert(candidates, RAW .. rev .. "/" .. FILE .. "?t=" .. stamp)
 end
-table.insert(candidates, "https://raw.githubusercontent.com/" .. REPO .. "/" .. BRANCH .. "/" .. FILE .. "?t=" .. stamp)
+table.insert(candidates, RAW .. BRANCH .. "/" .. FILE .. "?t=" .. stamp)
+table.insert(candidates, RAW .. BRANCH .. "/" .. FILE)
 
-local source
+local source, usedUrl, verified
 for _, url in ipairs(candidates) do
-    source = httpGet(url)
-    if source then break end
+    local body = httpGet(url)
+    if body then
+        if not expected or #body == expected then
+            source, usedUrl, verified = body, url, expected ~= nil
+            break
+        end
+        -- stale body: remember it and keep looking for the right size
+        if not source then
+            source, usedUrl, verified = body, url, false
+        end
+    end
 end
 
 if not source then
@@ -53,7 +76,15 @@ if not source then
     return
 end
 
-print(("[loader] revision %s | %d bytes"):format(rev and rev:sub(1, 7) or (BRANCH .. " (API unavailable)"), #source))
+print(("[loader] revision %s | %d bytes | %s"):format(
+    rev and rev:sub(1, 7) or (BRANCH .. " (API unavailable)"),
+    #source,
+    expected and (verified and "size verified" or ("size MISMATCH, expected " .. expected)) or "unverified"
+))
+
+if expected and not verified then
+    warn("[loader] served copy differs from revision " .. tostring(rev) .. " - a cache is interfering")
+end
 
 local chunk, err = loadstring(source)
 if not chunk then
