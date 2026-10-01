@@ -108,7 +108,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.5-beta (2026-09-30)"
+local BUILD = "v4.5-beta2 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -321,7 +321,7 @@ end
 
 function UI:Window(spec)
     local screen = new("ScreenGui", {
-        Name = "SCP_Menu",
+        Name = "Interface",
         ResetOnSpawn = false,
         IgnoreGuiInset = true,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -3067,7 +3067,7 @@ applyThemeColors()
 -- Visuals (FOV ring, target info, ESP, toasts) live in their own ScreenGui, so
 -- hiding the menu with K does not hide them.
 local visualsGui = new("ScreenGui", {
-    Name = "SCP_Visuals",
+    Name = "Overlay",
     ResetOnSpawn = false,
     IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -4011,6 +4011,21 @@ local function updateWheelSink()
     setWheelSink(Config.Menu.BlockCameraZoom and menuOpen())
 end
 
+-- While the menu is hidden it is taken out of the instance tree completely, so a
+-- client-side scan of PlayerGui finds nothing to look at. Enabled stays true, so
+-- showing it again is only a re-parent. One place handles every path that can
+-- hide the menu (key, toggle, close button, config).
+local function updateMenuPresence()
+    local gui = UI.gui
+    if not gui then return end
+    local wanted = gui.Enabled and not State.unloaded
+    if wanted and gui.Parent == nil then
+        gui.Parent = guiParent()
+    elseif not wanted and gui.Parent ~= nil then
+        gui.Parent = nil
+    end
+end
+
 -- Camera.Focus is not usable here: SCP:RP's camera does not update it, so the
 -- first version pinned 200 studs (distance to a stale focus) and the guard never
 -- saw a change. The character's head is the reference instead.
@@ -4282,6 +4297,7 @@ keepConnection(RunService.RenderStepped:Connect(function(dt)
     -- binds the wheel block while the menu is open and releases it when it
     -- closes; a no-op unless that state actually changed
     updateWheelSink()
+    updateMenuPresence()
     updateZoomPin()
     if frameCounter % 20 == 0 then
         pcall(function()

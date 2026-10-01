@@ -25,6 +25,20 @@ from the release notes for a fixed build, or `main` for the newest one.
 | `[12]` | Render and input loops |
 | `[13]` | Start + unload |
 
+## Verification
+
+Structural checks run before every commit, each validated with negative controls (a deliberately
+broken file that the check *must* flag):
+
+- block/`end` balance and delimiter counts
+- `%`-format string specifier count vs. the number of arguments passed
+- a real argument parser for the `new()` helper, to prove the third argument is always a parent `Instance`
+- every config path has a menu binding, and vice versa
+- an order check for locals used before their definition — this caught `flyStep` and `zoomGuardStep`, both of which would have thrown on every frame
+
+The checkers stay local in `.tools/` (gitignored). What they cannot check is in-game behaviour; that
+is verified by playing it, which is why this is a beta.
+
 ## Usage
 
 Run this in your executor (always pulls the latest version from this repo):
@@ -43,7 +57,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Cursip/SCP-RP-SCRIPT-
 
 | Key | Action |
 |---|---|
-| `K` | show/hide the menu (the FOV ring, target info, ESP and toasts stay visible — they live in their own ScreenGui) |
+| `K` | show/hide the menu (the FOV ring, target info, ESP and toasts stay visible — they live in their own ScreenGui). While the menu is hidden it is **removed from the instance tree** entirely, not just made invisible, and both ScreenGuis use neutral names (`Interface`, `Overlay`) |
 | `RightShift` | toggle silent aim (or hold it, if "Only while key is held" is on) |
 | `V` | toggle ESP |
 | `N` | noclip |
