@@ -108,7 +108,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.6-beta (2026-09-30)"
+local BUILD = "v4.6-beta2 (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -3549,6 +3549,20 @@ local function bindColor(section, spec)
     corner(swatch, 5)
     stroke(swatch, Theme.stroke, 1, 0.3)
 
+    -- the numeric value is shown in the row as well, so it is visible without
+    -- opening the picker and you can see whether a change actually landed
+    local rowValue = new("TextLabel", {
+        Size = UDim2.fromOffset(76, 18),
+        Position = UDim2.new(1, -146, 0.5, -9),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Code,
+        TextSize = 11,
+        TextColor3 = Theme.dim,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = "",
+        ZIndex = 2,
+    }, holder)
+
     local popup, backdrop
     local function closePopup()
         if popup then popup:Destroy(); popup = nil end
@@ -3570,9 +3584,9 @@ local function bindColor(section, spec)
         backdrop.MouseButton1Click:Connect(closePopup)
 
         popup = new("Frame", {
-            Size = UDim2.fromOffset(220, 132),
+            Size = UDim2.fromOffset(232, 176),
             Position = UDim2.fromOffset(
-                math.max(4, holder.AbsolutePosition.X - 160),
+                math.max(4, holder.AbsolutePosition.X - 172),
                 holder.AbsolutePosition.Y + holder.AbsoluteSize.Y + 4
             ),
             BackgroundColor3 = Theme.panel,
@@ -3593,14 +3607,72 @@ local function bindColor(section, spec)
         }, popup)
         corner(preview, 6)
 
-        local function applyColor()
+        local readout = new("TextLabel", {
+            Size = UDim2.new(1, -20, 0, 14),
+            Position = UDim2.fromOffset(10, 34),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Code,
+            TextSize = 11,
+            TextColor3 = Theme.dim,
+            Text = "",
+            ZIndex = 43,
+        }, popup)
+
+        local function rgbText(color: Color3): string
+            return ("%d %d %d"):format(
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5)
+            )
+        end
+
+        local function applyColor(quiet: boolean?)
             setPath(spec.path, current)
             swatch.BackgroundColor3 = current
             preview.BackgroundColor3 = current
+            readout.Text = rgbText(current)
+            if not quiet then
+                toast(("%s = %s"):format(spec.text, rgbText(current)), Theme.accent)
+            end
             if spec.onChanged then
                 local ok, err = pcall(spec.onChanged, current)
                 if not ok then toast("Error: " .. tostring(err), Theme.danger) end
             end
+        end
+        applyColor(true)
+
+        -- quick picks, so a colour can be set without dragging anything
+        local quick = { "Weiß", "Rot", "Grün", "Blau", "Gelb", "Cyan", "Magenta", "Schwarz" }
+        local quickColors = {
+            Color3.fromRGB(255, 255, 255),
+            Color3.fromRGB(255, 80, 80),
+            Color3.fromRGB(90, 230, 120),
+            Color3.fromRGB(90, 160, 255),
+            Color3.fromRGB(250, 220, 90),
+            Color3.fromRGB(90, 230, 230),
+            Color3.fromRGB(235, 110, 235),
+            Color3.fromRGB(20, 20, 20),
+        }
+        for index, label in ipairs(quick) do
+            local column = (index - 1) % 4
+            local row = math.floor((index - 1) / 4)
+            local chip = new("TextButton", {
+                Size = UDim2.fromOffset(50, 20),
+                Position = UDim2.fromOffset(10 + column * 54, 52 + row * 24),
+                BackgroundColor3 = quickColors[index],
+                BorderSizePixel = 0,
+                Font = Enum.Font.Gotham,
+                TextSize = 10,
+                TextColor3 = (index == 8 or index == 2) and Color3.new(1, 1, 1) or Color3.fromRGB(20, 20, 20),
+                Text = label,
+                AutoButtonColor = false,
+                ZIndex = 43,
+            }, popup)
+            corner(chip, 5)
+            chip.MouseButton1Click:Connect(function()
+                current = quickColors[index]
+                applyColor()
+            end)
         end
 
         local channels = { "R", "G", "B" }
@@ -3609,7 +3681,7 @@ local function bindColor(section, spec)
 
             local trackHolder = new("Frame", {
                 Size = UDim2.new(1, -20, 0, 22),
-                Position = UDim2.fromOffset(10, 40 + (index - 1) * 26),
+                Position = UDim2.fromOffset(10, 100 + (index - 1) * 26),
                 BackgroundTransparency = 1,
                 ZIndex = 42,
             }, popup)
@@ -3657,7 +3729,7 @@ local function bindColor(section, spec)
                     current = Color3.fromRGB(r, g, value)
                 end
                 fill.Size = UDim2.new(frac, 0, 1, 0)
-                applyColor()
+                applyColor(true)
             end
 
             track.InputBegan:Connect(function(input)
@@ -3669,6 +3741,7 @@ local function bindColor(section, spec)
             track.InputEnded:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     dragging = false
+                    toast(("%s = %s"):format(spec.text, rgbText(current)), Theme.accent)
                 end
             end)
             keepConnection(UIS.InputChanged:Connect(function(input)
@@ -3681,13 +3754,27 @@ local function bindColor(section, spec)
 
     table.insert(UI.refreshers, function()
         local color = getPath(spec.path)
-        if typeof(color) == "Color3" then swatch.BackgroundColor3 = color end
+        if typeof(color) == "Color3" then
+            swatch.BackgroundColor3 = color
+            rowValue.Text = ("%d %d %d"):format(
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5)
+            )
+        end
     end)
 
     local element = {}
     function element:Set(value)
         setPath(spec.path, value)
         swatch.BackgroundColor3 = value
+        if typeof(value) == "Color3" then
+            rowValue.Text = ("%d %d %d"):format(
+                math.floor(value.R * 255 + 0.5),
+                math.floor(value.G * 255 + 0.5),
+                math.floor(value.B * 255 + 0.5)
+            )
+        end
         if spec.onChanged then pcall(spec.onChanged, value) end
     end
     UI.pathBinders[spec.path] = element
