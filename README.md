@@ -3,10 +3,11 @@
 One script with its own mod menu (no more lone toggle button): tabs, switches, sliders,
 dropdowns, colour pickers and keybind fields, plus config save/load.
 
-**Status: beta.** The current release is a pre-release (`v4.5-beta`). Everything is tested
-structurally (a block/format/keyword-argument checker plus an order checker, both validated with
-negative controls), but in-game behaviour is only verified by playing it. Load a pinned revision
-from the release notes for a fixed build, or `main` for the newest one.
+**Status: beta, delivered from `main`.** The newest build is always on `main`, and the loader below
+resolves the current commit and loads that revision pinned, so a build stamp in the title bar always
+tells you which one is running. `v4.5-beta` exists as a frozen pre-release tag for a fixed snapshot.
+Everything is tested structurally (see [Verification](#verification)), but in-game behaviour is only
+verified by playing it.
 
 | Section | Contents |
 |---|---|
