@@ -108,7 +108,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.5-beta2 (2026-09-30)"
+local BUILD = "v4.6-beta (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -297,7 +297,10 @@ local UI = {
     promptBind = nil,   -- element waiting for a key press
     refreshers = {},    -- reads Config and refreshes the visuals
     keyActions = {},    -- [keybind name] = { text, fire } for the generic dispatch
-    attachKeybind = nil -- hook filled in [11] (needs Config)
+    attachKeybind = nil, -- hook filled in [11] (needs Config)
+    pathBinders = {},   -- [config path] = element, so the console can set any option
+    consoleBox = nil,   -- the command line TextBox
+    consolePrint = nil, -- filled in [11]
 }
 
 function UI:RefreshAll()
@@ -3265,6 +3268,7 @@ local function bindToggle(section, spec)
     local element = {}
     function element:Set(value) apply(value, true) end
     function element:Get() return getPath(spec.path) end
+    UI.pathBinders[spec.path] = element
     return element
 end
 
@@ -3379,6 +3383,7 @@ local function bindSlider(section, spec)
 
     local element = {}
     function element:Set(value) commit(value, true) end
+    UI.pathBinders[spec.path] = element
     return element
 end
 
@@ -3507,6 +3512,7 @@ local function bindDropdown(section, spec)
         refresh()
         if spec.onChanged then pcall(spec.onChanged, value) end
     end
+    UI.pathBinders[spec.path] = element
     return element
 end
 
@@ -3684,10 +3690,219 @@ local function bindColor(section, spec)
         swatch.BackgroundColor3 = value
         if spec.onChanged then pcall(spec.onChanged, value) end
     end
+    UI.pathBinders[spec.path] = element
     return element
 end
 
 UI.binders = { Toggle = bindToggle, Slider = bindSlider, Dropdown = bindDropdown, Color = bindColor }
+
+-- ------------------------------------------------------------- console
+-- A command line, so every option is reachable without clicking through tabs.
+-- Our own implementation: the idea of a command bar came from Infinite Yield,
+-- which ships without a licence, so nothing was copied from it. `set <path>
+-- <value>` works for every config key because each binder registers its element
+-- under its path, and going through that element also fires its onChanged.
+local Console = { lines = {}, history = {}, index = 0, maxLines = 14, out = nil }
+
+local commands = {}
+
+local function consolePrint(text: string)
+    table.insert(Console.lines, 1, tostring(text))
+    while #Console.lines > Console.maxLines do
+        table.remove(Console.lines)
+    end
+    if Console.out then
+        Console.out.Text = table.concat(Console.lines, "\n")
+    end
+    print("[console] " .. tostring(text))
+end
+
+local function cmd(aliases: string, help: string, run: (string) -> ())
+    for alias in string.gmatch(aliases, "[%w%-_]+") do
+        commands[string.lower(alias)] = { help = help, run = run }
+    end
+end
+
+local function asBoolean(raw: string, current: any): boolean?
+    local word = string.lower(raw or "")
+    if word == "on" or word == "true" or word == "1" or word == "yes" then return true end
+    if word == "off" or word == "false" or word == "0" or word == "no" then return false end
+    if word == "" or word == "toggle" then return current ~= true end
+    return nil
+end
+
+local function setByPath(path: string, raw: string): string
+    local element = UI.pathBinders[path]
+    if not element then
+        return "unknown path: " .. path .. "  (try 'list')"
+    end
+    local current = getPath(path)
+    local value: any
+    if typeof(current) == "boolean" then
+        value = asBoolean(raw, current)
+    elseif typeof(current) == "number" then
+        value = tonumber(raw)
+    elseif typeof(current) == "Color3" then
+        local r, g, b = string.match(raw or "", "(%d+)[%s,]+(%d+)[%s,]+(%d+)")
+        if r and g and b then
+            value = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
+        end
+    else
+        value = raw
+    end
+    if value == nil then
+        return ("bad value for %s (current: %s)"):format(path, tostring(current))
+    end
+    element:Set(value)
+    UI:RefreshAll()
+    return ("%s = %s"):format(path, tostring(getPath(path)))
+end
+
+local function toggleAlias(path: string)
+    return function(args: string)
+        consolePrint(setByPath(path, args ~= "" and args or "toggle"))
+    end
+end
+
+cmd("help,?", "this list", function(args: string)
+    local wanted = string.match(string.lower(args or ""), "^(%S+)")
+    if wanted and commands[wanted] then
+        consolePrint(("%s  -  %s"):format(wanted, commands[wanted].help))
+        return
+    end
+    local names = {}
+    for name in pairs(commands) do
+        table.insert(names, name)
+    end
+    table.sort(names)
+    consolePrint("commands: " .. table.concat(names, " "))
+end)
+
+cmd("clear,cls", "clear the output", function()
+    Console.lines = {}
+    if Console.out then Console.out.Text = "" end
+end)
+
+cmd("list,paths", "list every config path", function()
+    local groups = {}
+    for path in pairs(UI.pathBinders) do
+        local group = string.match(path, "^([^%.]+)") or "?"
+        groups[group] = groups[group] or {}
+        table.insert(groups[group], (string.gsub(path, "^[^%.]+%.", "")))
+    end
+    local keys = {}
+    for group in pairs(groups) do
+        table.insert(keys, group)
+    end
+    table.sort(keys)
+    for _, group in ipairs(keys) do
+        table.sort(groups[group])
+        consolePrint(group .. ": " .. table.concat(groups[group], " "))
+    end
+end)
+
+cmd("set", "set <path> <value>", function(args: string)
+    local path, value = string.match(args or "", "^(%S+)%s*(.*)$")
+    if not path then
+        consolePrint("usage: set <path> <value>")
+        return
+    end
+    consolePrint(setByPath(path, value or ""))
+end)
+
+cmd("get", "get <path>", function(args: string)
+    local path = string.match(args or "", "^(%S+)")
+    if not path or UI.pathBinders[path] == nil then
+        consolePrint("unknown path  (try 'list')")
+        return
+    end
+    consolePrint(("%s = %s"):format(path, tostring(getPath(path))))
+end)
+
+-- shortcuts for what people type most
+cmd("esp", "esp on|off", toggleAlias("ESP.Enabled"))
+cmd("names", "esp name tags", toggleAlias("ESP.Name"))
+cmd("boxes", "esp boxes", toggleAlias("ESP.Box"))
+cmd("distance", "esp distance", toggleAlias("ESP.Distance"))
+cmd("healthbar,hp", "esp healthbar", toggleAlias("ESP.HealthBar"))
+cmd("aim,silent", "silent aim", toggleAlias("Aim.Enabled"))
+cmd("team", "team check", toggleAlias("Aim.TeamCheck"))
+cmd("visible,wall", "visible only", toggleAlias("Aim.VisibleOnly"))
+cmd("autofire,trigger", "auto fire", toggleAlias("Aim.AutoFire"))
+cmd("fov", "fov radius", toggleAlias("Aim.FOV"))
+cmd("maxdist", "max distance", toggleAlias("Aim.MaxDistance"))
+cmd("hitbox", "hitbox expander", toggleAlias("Aim.Hitbox"))
+cmd("noclip", "noclip", toggleAlias("Player.Noclip"))
+cmd("fullbright,fb", "fullbright", toggleAlias("Player.Fullbright"))
+cmd("fly", "fly", toggleAlias("Movement.Fly"))
+cmd("infjump,jump", "infinite jump", toggleAlias("Movement.InfiniteJump"))
+cmd("speed,walkspeed", "walkspeed", toggleAlias("Movement.WalkSpeed"))
+cmd("spin,beyblade", "spin in place", toggleAlias("Fun.Spin"))
+cmd("statue,173", "SCP-173 mode", toggleAlias("Fun.SCP173"))
+cmd("rage,096", "SCP-096 mode", toggleAlias("Fun.SCP096"))
+cmd("mimic", "mimic the nearest player", toggleAlias("Fun.Mimic"))
+cmd("ice", "ice mode", toggleAlias("Fun.Ice"))
+cmd("moonwalk", "moonwalk", toggleAlias("Fun.Moonwalk"))
+cmd("marionette", "marionette", toggleAlias("Fun.Marionette"))
+cmd("moongravity,moon", "moon gravity", toggleAlias("Fun.MoonGravity"))
+cmd("watermark", "watermark hud", toggleAlias("Misc.Watermark"))
+cmd("fog", "remove fog", toggleAlias("Misc.RemoveFog"))
+cmd("fps,boost", "fps boost", toggleAlias("Utility.FpsBoost"))
+cmd("antiafk,afk", "anti afk", toggleAlias("Utility.AntiAFK"))
+cmd("staff", "staff detector", toggleAlias("Staff.Enabled"))
+cmd("panic", "panic mode", toggleAlias("Staff.Panic"))
+cmd("playerlist", "player list window", toggleAlias("List.Enabled"))
+
+cmd("theme", "theme <preset>", function(args: string)
+    local word = string.lower(string.match(args or "", "^%s*(%w+)"))
+    if word then
+        local pretty = string.upper(string.sub(word, 1, 1)) .. string.sub(word, 2)
+        if THEME_PRESETS[pretty] then
+            applyThemePreset(pretty)
+            return
+        end
+    end
+    consolePrint("presets: " .. table.concat(THEME_NAMES, " "))
+end)
+
+cmd("rejoin,rj", "rejoin this server", function() rejoinServer() end)
+cmd("hop,serverhop", "hop to another server", function() serverHop() end)
+cmd("record,rec", "echo: record movement", function() echoRecordStart() end)
+cmd("play,echo", "echo: play back", function() echoPlay() end)
+cmd("echoclear", "echo: clear recording", function() echoClear() end)
+cmd("unload", "unload the script", function()
+    if _G.__scpUnload then _G.__scpUnload() end
+end)
+cmd("hide", "hide or show the menu", function()
+    Config.Menu.Visible = not (UI.gui and UI.gui.Enabled)
+    if UI.gui then UI.gui.Enabled = Config.Menu.Visible end
+    UI:RefreshAll()
+end)
+
+local function runCommand(text: string)
+    local body = string.match(text, "^[:/]?%s*(.*)$") or text
+    local name, args = string.match(body, "^(%S+)%s*(.*)$")
+    if not name then return end
+    local entry = commands[string.lower(name)]
+    if not entry then
+        consolePrint("unknown command: " .. name .. "  (try 'help')")
+        return
+    end
+    local ok, err = pcall(entry.run, args or "")
+    if not ok then
+        consolePrint("error: " .. tostring(err))
+    end
+end
+
+local function consoleHistory(step: number)
+    if #Console.history == 0 or not Console.box then return end
+    Console.index = math.clamp(Console.index + step, 0, #Console.history)
+    Console.box.Text = Console.history[Console.index + 1] or ""
+    Console.box.CursorPosition = #Console.box.Text + 1
+end
+
+UI.consolePrint = consolePrint
+UI.consoleHistory = consoleHistory
 
 -- ------------------------------------------------------ silent aim tab
 local function onAimEnabledChanged(value)
@@ -3882,6 +4097,67 @@ local menuOk, menuErr = pcall(function()
         s:Label("Only whole words count in the label scan - \"Administration\" no longer matches \"admin\". The message says why someone was flagged, so a wrong hit is visible. Config.Staff.KnownNames counts as staff, Config.Staff.IgnoreNames never does.")
         s:Label("Keywords for the label scan: " .. table.concat(Config.Staff.Keywords, ", "))
         s:Label("Detected staff is marked [STAFF] in red in the ESP and in the player list, so you can see who is watching.")
+    end
+
+    local consoleTab = window:Tab("Console")
+    do
+        local s = consoleTab:Section("Command line")
+        local holder = new("Frame", {
+            Size = UDim2.new(1, 0, 0, 30),
+            BackgroundColor3 = Theme.element,
+            BorderSizePixel = 0,
+            LayoutOrder = s:next(),
+        }, s.holder)
+        corner(holder, 7)
+        stroke(holder, Theme.stroke, 1, 0.5)
+
+        local box = new("TextBox", {
+            Size = UDim2.new(1, -20, 1, 0),
+            Position = UDim2.fromOffset(10, 0),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Code,
+            TextSize = 13,
+            TextColor3 = Theme.text,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            PlaceholderText = ":esp on    :set aim.fov 300    :list    :help",
+            PlaceholderColor3 = Theme.dim,
+            Text = "",
+            ClearTextOnFocus = false,
+            ZIndex = 2,
+        }, holder)
+        Console.box = box
+        UI.consoleBox = box
+
+        box.FocusLost:Connect(function(enterPressed)
+            if not enterPressed then return end
+            local text = string.gsub(box.Text or "", "^%s*(.-)%s*$", "%1")
+            box.Text = ""
+            if text == "" then return end
+            table.insert(Console.history, 1, text)
+            Console.index = 0
+            consolePrint("> " .. text)
+            runCommand(text)
+        end)
+
+        local out = new("TextLabel", {
+            Size = UDim2.new(1, 0, 0, 210),
+            BackgroundColor3 = Theme.window,
+            BorderSizePixel = 0,
+            Font = Enum.Font.Code,
+            TextSize = 12,
+            TextColor3 = Theme.text,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
+            Text = "",
+            LayoutOrder = s:next(),
+        }, s.holder)
+        corner(out, 7)
+        stroke(out, Theme.stroke, 1, 0.4)
+        pad(out, 8)
+        Console.out = out
+
+        s:Label("Enter runs a command, Up/Down walks through the history. 'list' shows every config path, 'set <path> <value>' works for all of them, ':help' lists the shortcuts. This is our own code - the idea of a command bar came from Infinite Yield, which ships without a licence, so nothing was copied from it.")
     end
 
     local settingsTab = window:Tab("Settings")
@@ -4345,6 +4621,15 @@ end))
 local lastKeyPress = {}
 
 keepConnection(UIS.InputBegan:Connect(function(input, processed)
+    -- console history: a focused TextBox marks its input as processed, so this
+    -- has to run before that guard
+    if UI.consoleBox and UI.consoleBox:IsFocused()
+        and (input.KeyCode == Enum.KeyCode.Up or input.KeyCode == Enum.KeyCode.Down) then
+        if UI.consoleHistory then
+            UI.consoleHistory(input.KeyCode == Enum.KeyCode.Up and 1 or -1)
+        end
+        return
+    end
     if processed then return end
 
     -- keybind capture
