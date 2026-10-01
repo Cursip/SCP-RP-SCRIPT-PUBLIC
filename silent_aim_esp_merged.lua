@@ -108,7 +108,7 @@ local CONFIG_FILE = "scp_aim_esp_config.json"
 
 -- Shown in the console, the title bar and the status line. If this does not
 -- change after an update, your executor served a cached copy of the file.
-local BUILD = "v4.4 (2026-09-30)"
+local BUILD = "v4.5-beta (2026-09-30)"
 
 --=====================================================================
 -- [3] NOTIFICATIONS
@@ -192,6 +192,38 @@ local Theme = {
     stroke = Color3.fromRGB(43, 47, 57),
 }
 
+-- Live theming. Every property that was set from an exact Theme colour is
+-- remembered, so a colour change can be applied without rebuilding the menu.
+-- Values that are not exact theme colours (the ESP and FOV colours, which are
+-- picked separately) are ignored.
+local themeUsers = {}
+
+local function themeKeyOf(color: any): string?
+    if typeof(color) ~= "Color3" then return nil end
+    for key, value in pairs(Theme) do
+        if typeof(value) == "Color3" and value == color then
+            return key
+        end
+    end
+    return nil
+end
+
+local function trackTheme(inst: Instance?, prop: string?, color: any)
+    if not inst or not prop then return end
+    local key = themeKeyOf(color)
+    if key then
+        table.insert(themeUsers, { inst = inst, prop = prop, key = key })
+    end
+end
+
+-- for closures that keep their own colour values (the hover shades)
+local function trackRefs(refs: { [string]: any }, field: string, color: any)
+    local key = themeKeyOf(color)
+    if key then
+        table.insert(themeUsers, { ref = refs, field = field, key = key })
+    end
+end
+
 -- Build an instance. The third argument is the PARENT (that is the calling
 -- convention everywhere in this file): new("Frame", {...}, someParent).
 local function new(class: string, props: { [string]: any }?, parent: Instance?)
@@ -199,6 +231,9 @@ local function new(class: string, props: { [string]: any }?, parent: Instance?)
     if props then
         for k, v in pairs(props) do
             inst[k] = v
+            if typeof(v) == "Color3" then
+                trackTheme(inst, k, v)
+            end
         end
     end
     if parent then
@@ -217,6 +252,7 @@ end
 local function stroke(parent: Instance, color: Color3, thickness: number?, transparency: number?)
     local s = Instance.new("UIStroke")
     s.Color = color
+    trackTheme(s, "Color", color)
     s.Thickness = thickness or 1
     s.Transparency = transparency or 0
     s.Parent = parent
@@ -242,11 +278,15 @@ local function list(parent: Instance, gap: number)
 end
 
 local function hover(inst: GuiObject, from: Color3, to: Color3)
+    -- the colours live in a table so a theme change can update them in place
+    local refs = { from = from, to = to }
+    trackRefs(refs, "from", from)
+    trackRefs(refs, "to", to)
     inst.MouseEnter:Connect(function()
-        TweenService:Create(inst, TweenInfo.new(0.12), { BackgroundColor3 = to }):Play()
+        TweenService:Create(inst, TweenInfo.new(0.12), { BackgroundColor3 = refs.to }):Play()
     end)
     inst.MouseLeave:Connect(function()
-        TweenService:Create(inst, TweenInfo.new(0.12), { BackgroundColor3 = from }):Play()
+        TweenService:Create(inst, TweenInfo.new(0.12), { BackgroundColor3 = refs.from }):Play()
     end)
 end
 
@@ -264,6 +304,19 @@ function UI:RefreshAll()
     for _, fn in ipairs(self.refreshers) do
         pcall(fn)
     end
+end
+
+-- Re-applies every registered theme colour and then lets the binders redraw
+-- (toggle pills, slider fills, dropdown labels read Theme at call time).
+function UI:ApplyTheme()
+    for _, entry in ipairs(themeUsers) do
+        if entry.ref then
+            entry.ref[entry.field] = Theme[entry.key]
+        elseif entry.inst and entry.inst.Parent ~= nil then
+            entry.inst[entry.prop] = Theme[entry.key]
+        end
+    end
+    self:RefreshAll()
 end
 
 function UI:Window(spec)
@@ -693,6 +746,11 @@ local Config = {
         Visible = true,
         Scale = 1,
         BlockCameraZoom = true,
+        Theme = "Blue",
+        Accent = Color3.fromRGB(88, 166, 255),
+        Window = Color3.fromRGB(15, 17, 21),
+        Element = Color3.fromRGB(27, 30, 37),
+        Text = Color3.fromRGB(233, 237, 243),
     },
     Aim = {
         Enabled = true,
@@ -2954,6 +3012,58 @@ end
 --=====================================================================
 -- [11] MENU BUILD
 --=====================================================================
+-- ------------------------------------------------------------- theme
+-- Four base colours are configurable; panel, sidebar, borders, hover and dim
+-- text are derived from them so a theme change stays coherent.
+local THEME_PRESETS = {
+    Blue = { accent = Color3.fromRGB(88, 166, 255), window = Color3.fromRGB(15, 17, 21), element = Color3.fromRGB(27, 30, 37), text = Color3.fromRGB(233, 237, 243) },
+    Emerald = { accent = Color3.fromRGB(64, 200, 140), window = Color3.fromRGB(13, 20, 17), element = Color3.fromRGB(24, 36, 31), text = Color3.fromRGB(232, 243, 238) },
+    Crimson = { accent = Color3.fromRGB(235, 86, 98), window = Color3.fromRGB(20, 13, 15), element = Color3.fromRGB(37, 23, 27), text = Color3.fromRGB(246, 235, 237) },
+    Violet = { accent = Color3.fromRGB(167, 120, 255), window = Color3.fromRGB(17, 14, 24), element = Color3.fromRGB(31, 26, 43), text = Color3.fromRGB(238, 235, 246) },
+    Amber = { accent = Color3.fromRGB(240, 176, 70), window = Color3.fromRGB(20, 17, 12), element = Color3.fromRGB(36, 31, 22), text = Color3.fromRGB(245, 240, 230) },
+    Graphite = { accent = Color3.fromRGB(190, 196, 206), window = Color3.fromRGB(16, 17, 19), element = Color3.fromRGB(29, 31, 35), text = Color3.fromRGB(235, 237, 240) },
+}
+local THEME_NAMES = { "Blue", "Emerald", "Crimson", "Violet", "Amber", "Graphite", "Custom" }
+
+local function applyThemeColors()
+    local cfg = Config.Menu
+    Theme.accent = cfg.Accent
+    Theme.window = cfg.Window
+    Theme.element = cfg.Element
+    Theme.text = cfg.Text
+    Theme.panel = cfg.Window:Lerp(Color3.new(1, 1, 1), 0.035)
+    Theme.sidebar = cfg.Window:Lerp(Color3.new(0, 0, 0), 0.35)
+    Theme.stroke = cfg.Window:Lerp(Color3.new(1, 1, 1), 0.14)
+    Theme.elementHover = cfg.Element:Lerp(Color3.new(1, 1, 1), 0.07)
+    Theme.dim = cfg.Text:Lerp(cfg.Window, 0.45)
+end
+
+local function markThemeCustom()
+    if Config.Menu.Theme ~= "Custom" then
+        Config.Menu.Theme = "Custom"
+    end
+end
+
+local function applyThemePreset(name: string)
+    local preset = THEME_PRESETS[name]
+    if not preset then return end
+    Config.Menu.Accent = preset.accent
+    Config.Menu.Window = preset.window
+    Config.Menu.Element = preset.element
+    Config.Menu.Text = preset.text
+    applyThemeColors()
+    UI:ApplyTheme()
+    toast("Theme: " .. name, Theme.accent)
+end
+
+local function applyCustomTheme()
+    markThemeCustom()
+    applyThemeColors()
+    UI:ApplyTheme()
+end
+
+applyThemeColors()
+
 -- Visuals (FOV ring, target info, ESP, toasts) live in their own ScreenGui, so
 -- hiding the menu with K does not hide them.
 local visualsGui = new("ScreenGui", {
@@ -3776,7 +3886,19 @@ local menuOk, menuErr = pcall(function()
 
     local settingsTab = window:Tab("Settings")
     do
-        local m = settingsTab:Section("Menu")
+        local th = settingsTab:Section("Theme")
+th:Dropdown({ text = "Preset", path = "Menu.Theme", options = THEME_NAMES, onChanged = function(value)
+    if value ~= "Custom" then
+        applyThemePreset(value)
+    end
+end })
+th:Color({ text = "Accent", path = "Menu.Accent", onChanged = applyCustomTheme })
+th:Color({ text = "Window", path = "Menu.Window", onChanged = applyCustomTheme })
+th:Color({ text = "Rows", path = "Menu.Element", onChanged = applyCustomTheme })
+th:Color({ text = "Text", path = "Menu.Text", onChanged = applyCustomTheme })
+th:Label("Presets set all four base colours; picking one yourself switches the preset to Custom. Panel, sidebar, borders, hover shades and dim text are derived automatically, and the change is applied live without rebuilding the menu.")
+
+local m = settingsTab:Section("Menu")
         m:Toggle({ text = "Menu visible", path = "Menu.Visible", keybind = "MenuToggle", onChanged = function(value)
             UI.gui.Enabled = value
         end })

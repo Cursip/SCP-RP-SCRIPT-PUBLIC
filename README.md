@@ -3,6 +3,11 @@
 One script with its own mod menu (no more lone toggle button): tabs, switches, sliders,
 dropdowns, colour pickers and keybind fields, plus config save/load.
 
+**Status: beta.** The current release is a pre-release (`v4.5-beta`). Everything is tested
+structurally (a block/format/keyword-argument checker plus an order checker, both validated with
+negative controls), but in-game behaviour is only verified by playing it. Load a pinned revision
+from the release notes for a fixed build, or `main` for the newest one.
+
 | Section | Contents |
 |---|---|
 | `[2]` | Flags (remote build, author UI, team aliases, debug) |
@@ -98,6 +103,7 @@ and stays unbound until you set a key yourself. `Backspace` clears a binding.
 
 **Settings**
 - menu visible, UI scale
+- **theme**: six presets (`Blue`, `Emerald`, `Crimson`, `Violet`, `Amber`, `Graphite`) plus colour pickers for accent, window, rows and text. Picking a colour yourself switches the preset to `Custom`. Panel, sidebar, borders, hover shades and dim text are **derived** from those four, and the change applies **live** — the UI library remembers every property that was set from a theme colour, so `UI:ApplyTheme()` restyles without rebuilding the menu. Separately chosen colours (ESP, FOV ring) are not touched
 - **wheel while the menu is open does not zoom the camera** (default on, Settings → Menu). Three layers, because the first one alone is not enough in every game:
   1. the wheel is sunk at the highest action priority — this only helps in games whose camera listens to the action system, and SCP:RP does not;
   2. the zoom range itself: while the menu is open, `CameraMinZoomDistance` and `CameraMaxZoomDistance` are pinned to the distance the camera had, which is what the camera module clamps its zoom to (camera collision keeps working, it shortens the camera without changing the zoom value);
