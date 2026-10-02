@@ -26,6 +26,11 @@ verified by playing it.
 | `[12]` | Render and input loops |
 | `[13]` | Start + unload |
 
+## Features
+
+The complete list is in [FEATURES.md](FEATURES.md): 9 tabs, 97 options, 45 console commands, every
+switch and button rebindable.
+
 ## Verification
 
 Structural checks run before every commit, each validated with negative controls (a deliberately
